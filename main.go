@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/NaNameUz3r/review_autostop_operator/namespaces_informer"
+	"github.com/NaNameUz3r/review_autostop_service/namespaces_informer"
 	"github.com/sirupsen/logrus"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"

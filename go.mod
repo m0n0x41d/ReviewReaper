@@ -1,4 +1,4 @@
-module github.com/NaNameUz3r/review_autostop_operator
+module github.com/NaNameUz3r/review_autostop_service
 
 go 1.19
 
