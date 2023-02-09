@@ -4,8 +4,9 @@ import (
 	"os"
 
 	"github.com/NaNameUz3r/review_autostop_service/namespaces_informer"
-	"github.com/sirupsen/logrus"
-	"k8s.io/client-go/dynamic"
+	"github.com/NaNameUz3r/review_autostop_service/utils"
+
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -14,12 +15,12 @@ func main() {
 
 	clusterConfig, err := setClusterConfig()
 	if err != nil {
-		logrus.WithError(err).Fatal("Could not get config")
+		utils.Logger.WithError(err).Fatalln("Could not get config")
 	}
 
-	clusterClient, err := dynamic.NewForConfig(clusterConfig)
+	clusterClient, err := kubernetes.NewForConfig(clusterConfig)
 	if err != nil {
-		logrus.WithError(err).Panic("Could not make client")
+		utils.Logger.WithError(err).Panicln("Could not make client")
 	}
 
 	namespaces_informer.RunNsInformer(clusterClient)

@@ -1,55 +1,65 @@
 package namespaces_informer
 
 import (
-	"context"
 	"fmt"
-	"os"
-	"os/signal"
-	"sync"
-	"time"
 
+	"github.com/NaNameUz3r/review_autostop_service/utils"
 	"github.com/sirupsen/logrus"
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/dynamic/dynamicinformer"
+
+	// "github.com/sirupsen/logrus"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/informers"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 )
 
-func RunNsInformer(client *dynamic.DynamicClient) {
+func RunNsInformer(client *kubernetes.Clientset) {
 
-	resource := schema.GroupVersionResource{Group: "core", Version: "v1", Resource: "namespaces"}
-	factory := dynamicinformer.NewFilteredDynamicSharedInformerFactory(client, time.Minute, corev1.NamespaceAll, nil)
-	informer := factory.ForResource(resource).Informer()
+	// stop signal for the informer
+	stopper := make(chan struct{})
+	defer close(stopper)
 
-	mux := &sync.RWMutex{}
-	synced := false
+	factory := informers.NewSharedInformerFactory(client, 0)
+	namespaceInformer := factory.Core().V1().Namespaces()
+	informer := namespaceInformer.Informer()
 
-	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
-			mux.RLock()
-			defer mux.RUnlock()
-			if !synced {
-				return
-			}
+	defer runtime.HandleCrash()
 
-			fmt.Println("Check-check")
-		},
-	})
+	// start informer ->
+	go factory.Start(stopper)
 
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer cancel()
-
-	go informer.Run(ctx.Done())
-
-	isSynced := cache.WaitForCacheSync(ctx.Done(), informer.HasSynced)
-	mux.Lock()
-	synced = isSynced
-	mux.Unlock()
-
-	if !isSynced {
-		logrus.Fatal("Could not sync resources")
+	// start to sync and call list
+	if !cache.WaitForCacheSync(stopper, informer.HasSynced) {
+		runtime.HandleError(fmt.Errorf("Timed out waiting for caches to sync"))
+		return
 	}
 
-	<-ctx.Done()
+	// TODO: We going to lable all review namaspaces with some lable containing expiration timestamp.
+	// At first glance we need only AddFunc, but, probably, we need some fool-protection for lable deletion in UpdateFunc.
+	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    onAdd,
+		UpdateFunc: func(interface{}, interface{}) { fmt.Println("update not implemented") },
+		DeleteFunc: func(interface{}) { fmt.Println("delete not implemented") },
+	})
+
+	// TODO: find all namespaces
+	lister := namespaceInformer.Lister()
+
+	namespaces, err := lister.List(labels.Everything())
+
+	if err != nil {
+		utils.Logger.WithError(err).Errorln("Could not list namespaces")
+	}
+
+	// TODO: Make fiels type usable through project module
+	utils.Logger.WithFields(utils.logrus.Fields{
+		"ClusterNamespaces": namespaces,
+	}).Info("Trololo")
+
+	<-stopper
+}
+
+func onAdd(obj interface{}) {
+	logrus.Info("Check-check, new namespace added and list resynchronized")
 }
