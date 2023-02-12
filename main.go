@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"os"
+	"os/signal"
+	"syscall"
 
+	"github.com/NaNameUz3r/review_autostop_service/mylog"
 	"github.com/NaNameUz3r/review_autostop_service/namespaces_informer"
-	"github.com/NaNameUz3r/review_autostop_service/utils"
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -12,19 +15,24 @@ import (
 )
 
 func main() {
+	logger := mylog.NewLogger()
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
 
 	clusterConfig, err := setClusterConfig()
 	if err != nil {
-		utils.Logger.WithError(err).Fatalln("Could not get config")
+		logger.WithError(err).Fatal("Could not get config")
 	}
 
 	clusterClient, err := kubernetes.NewForConfig(clusterConfig)
 	if err != nil {
-		utils.Logger.WithError(err).Panicln("Could not make client")
+		logger.WithError(err).Fatal("Could not make client")
 	}
-
-	namespaces_informer.RunNsInformer(clusterClient)
-
+	newInformer := namespaces_informer.NewNsInformer(clusterClient, logger)
+	if err := newInformer.Run(ctx); err != nil {
+		logger.WithError(err).Fatal("Could not start informer")
+	}
+	<-ctx.Done()
 }
 
 func setClusterConfig() (*rest.Config, error) {
