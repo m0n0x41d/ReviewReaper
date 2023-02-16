@@ -6,32 +6,48 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/NaNameUz3r/review_autostop_service/mylog"
+	"github.com/NaNameUz3r/review_autostop_service/logs"
 	"github.com/NaNameUz3r/review_autostop_service/namespaces_informer"
+	"github.com/NaNameUz3r/review_autostop_service/util"
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+
+	// tmp import for dev running
+	_ "k8s.io/client-go/plugin/pkg/client/auth/oidc"
 )
 
+var ()
+
 func main() {
-	logger := mylog.NewLogger()
+	logger := logs.NewLogger()
+
+	config, err := util.LoadConfig()
+	if err != nil {
+		logger.Fatal("Could not load config.yaml, aborting.")
+	}
+
+	logger.Info("Will watch for namespaces with prefixes: ", config.WatchNamespaces)
+
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
 	clusterConfig, err := setClusterConfig()
 	if err != nil {
-		logger.WithError(err).Fatal("Could not get config")
+		logger.WithError(err).Fatal("Could not get ClusterConfig")
 	}
 
 	clusterClient, err := kubernetes.NewForConfig(clusterConfig)
 	if err != nil {
-		logger.WithError(err).Fatal("Could not make client")
+		logger.WithError(err).Fatal("Could not make client.")
 	}
+
 	newInformer := namespaces_informer.NewNsInformer(clusterClient, logger)
-	if err := newInformer.Run(ctx); err != nil {
-		logger.WithError(err).Fatal("Could not start informer")
+	if err := newInformer.Run(ctx, config); err != nil {
+		logger.WithError(err).Fatal("Could not start informer.")
 	}
+
 	<-ctx.Done()
 }
 

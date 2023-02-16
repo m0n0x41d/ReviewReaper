@@ -1,0 +1,8 @@
+namespaces:
+  - review
+  - feature
+
+# Retention defined in days. 
+retention: 1
+
+annotation_key: delete_after
