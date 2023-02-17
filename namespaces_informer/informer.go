@@ -8,12 +8,13 @@ import (
 	"time"
 
 	"github.com/NaNameUz3r/review_autostop_service/logs"
-	"github.com/NaNameUz3r/review_autostop_service/util"
+	"github.com/NaNameUz3r/review_autostop_service/utils"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/informers"
+	v1 "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 )
@@ -30,7 +31,7 @@ func NewNsInformer(client *kubernetes.Clientset, logger logs.Logger) *NsInformer
 	}
 }
 
-func (n *NsInformer) Run(stopper context.Context, config util.Config) error {
+func (n *NsInformer) Run(ctx context.Context, config utils.Config) error {
 
 	factory := informers.NewSharedInformerFactory(n.client, 0)
 	namespaceInformer := factory.Core().V1().Namespaces()
@@ -45,38 +46,44 @@ func (n *NsInformer) Run(stopper context.Context, config util.Config) error {
 	})
 
 	// start informer ->
-	go factory.Start(stopper.Done())
+	go factory.Start(ctx.Done())
 
 	// start to sync and call list
-	if !cache.WaitForCacheSync(stopper.Done(), informer.HasSynced) {
+	if !cache.WaitForCacheSync(ctx.Done(), informer.HasSynced) {
 		// runtime.HandleError()
 		return errors.New("timed out waiting for caches to sync")
 	}
 
-	// TODO: find all namespaces
-	lister := namespaceInformer.Lister()
+	// // TODO: find all namespaces
+	// lister := namespaceInformer.Lister()
 
-	namespaces, err := lister.List(labels.Everything())
-	if err != nil {
-		return errors.New("could not list namespaces")
-	}
+	// namespaces, err := lister.List(labels.Everything())
+	// if err != nil {
+	// 	return errors.New("could not list namespaces")
+	// }
 
-	// fmt.Println(config.WatchNamespaces[0])
-	watchedNamespacesNames := make([]string, 0)
-	watchedNamespaces := make([]*corev1.Namespace, 0)
-	namespacesMap := make(logs.Fields)
-	for _, ns := range namespaces {
-		if isWatched(ns.Name, config.WatchNamespaces) {
-			watchedNamespacesNames = append(watchedNamespacesNames, ns.Name)
-			watchedNamespaces = append(watchedNamespaces, ns)
-			namespacesMap[ns.Name] = ns
-		}
+	// watchedNamespacesNames := make([]string, 0)
+	// watchedNamespaces := make([]*corev1.Namespace, 0)
+	// namespacesMap := make(logs.Fields)
+	// for _, ns := range namespaces {
+	// 	if isWatched(ns.Name, config.WatchNamespaces) {
+	// 		watchedNamespacesNames = append(watchedNamespacesNames, ns.Name)
+	// 		watchedNamespaces = append(watchedNamespaces, ns)
+	// 		namespacesMap[ns.Name] = ns
+	// 	}
 
-	}
-	n.logger.WithField("WatchedNamespaces", watchedNamespacesNames).Info("Trololo")
+	// }
+	// n.logger.WithField("WatchedNamespaces", watchedNamespacesNames).Info("Trololo")
 	// n.logger.WithFields(namespacesMap).Info("Trololololo2")
 
-	err = ensureLabeled(stopper, n.client, watchedNamespaces, config)
+	watchedNamespaces, err := listWatchedNamespaces(namespaceInformer, config)
+	if err != nil {
+		return errors.New("Could not list namespaces")
+	}
+
+	// fmt.Println(watchedNamespaces[0].ObjectMeta.Name)
+
+	err = ensureLabeled(ctx, n.client, watchedNamespaces, config)
 	if err != nil {
 		n.logger.Error(err)
 	}
@@ -87,7 +94,35 @@ func (n *NsInformer) Run(stopper context.Context, config util.Config) error {
 }
 
 func (n *NsInformer) onAdd(obj interface{}) {
-	n.logger.Info("NsInformer cache is resynced.")
+
+	namespace := obj.(*corev1.Namespace)
+	// n.logger.Info("NsInformer cache is resynced with namespace: ", namespace.ObjectMeta.Name)
+	fmt.Println("NsInformer cache is resynced with namespace: ", namespace.ObjectMeta.Name)
+
+	// if isWatched(namespace.ObjectMeta.Name, Config.WatchedNamespaces) {
+	// 	fmt.Println("WATCHED!")
+	// }
+
+}
+
+func listWatchedNamespaces(informer v1.NamespaceInformer, config utils.Config) (namespaces []*corev1.Namespace, err error) {
+	lister := informer.Lister()
+	watchedNamespaces := make([]*corev1.Namespace, 0)
+
+	namespaces, err = lister.List(labels.Everything())
+	if err != nil {
+		return watchedNamespaces, errors.New("could not list namespaces")
+	}
+
+	for _, ns := range namespaces {
+		if isWatched(ns.Name, config.WatchNamespaces) {
+			watchedNamespaces = append(watchedNamespaces, ns)
+		}
+
+	}
+
+	return watchedNamespaces, err
+
 }
 
 func isWatched(nsName string, watchedNs []string) bool {
@@ -101,7 +136,7 @@ func isWatched(nsName string, watchedNs []string) bool {
 	return isMatched
 }
 
-func ensureLabeled(context context.Context, client *kubernetes.Clientset, namespaces []*corev1.Namespace, config util.Config) error {
+func ensureLabeled(context context.Context, client *kubernetes.Clientset, namespaces []*corev1.Namespace, config utils.Config) error {
 	for _, ns := range namespaces {
 		annotations := getNsAnnotations(ns)
 		_, ok := annotations[config.DeletionAnnotationKey]

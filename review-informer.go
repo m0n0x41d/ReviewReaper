@@ -8,7 +8,7 @@ import (
 
 	"github.com/NaNameUz3r/review_autostop_service/logs"
 	"github.com/NaNameUz3r/review_autostop_service/namespaces_informer"
-	"github.com/NaNameUz3r/review_autostop_service/util"
+	"github.com/NaNameUz3r/review_autostop_service/utils"
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -23,7 +23,7 @@ var ()
 func main() {
 	logger := logs.NewLogger()
 
-	config, err := util.LoadConfig()
+	config, err := utils.LoadConfig()
 	if err != nil {
 		logger.Fatal("Could not load config.yaml, aborting.")
 	}
