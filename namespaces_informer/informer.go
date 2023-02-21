@@ -19,6 +19,9 @@ import (
 	"k8s.io/client-go/tools/cache"
 )
 
+// pass this in struct below. Make corresponding functions struct methods.
+var Config utils.Config
+
 type NsInformer struct {
 	client *kubernetes.Clientset
 	logger logs.Logger
@@ -31,78 +34,65 @@ func NewNsInformer(client *kubernetes.Clientset, logger logs.Logger) *NsInformer
 	}
 }
 
-func (n *NsInformer) Run(ctx context.Context, config utils.Config) error {
+func (n *NsInformer) Run(ctx context.Context, cfg utils.Config) error {
 
-	factory := informers.NewSharedInformerFactory(n.client, 0)
-	namespaceInformer := factory.Core().V1().Namespaces()
+	Config = cfg
+	// TODO: this timeout should be changed on release -------------↓
+	informerFactory := informers.NewSharedInformerFactory(n.client, 0)
+	namespaceInformer := informerFactory.Core().V1().Namespaces()
 	informer := namespaceInformer.Informer()
 
-	// TODO: We going to lable all review namaspaces with some lable containing expiration timestamp.
-	// At first glance we need only AddFunc, but, probably, we need some fool-protection for lable deletion in UpdateFunc.
+	// TODO: Мы делаем onAdd и обновляем новый неймспейс, если он вотчится, с аннотацией.
+	// Мы в onUpdate чекаем не удалили ли случайно пользователи аннотацию с неймспейса, который мы вотчим, и пишем её снова, если удалили.
+	// Необходимо определить наиболее оптимальный способ релистануть все неймспейсы в шедуленной горутине-удоляторе. Пихать в неё namespaceInformer и делать list снова?
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    n.onAdd,
-		UpdateFunc: func(interface{}, interface{}) { fmt.Println("update not implemented") },
-		DeleteFunc: func(interface{}) { fmt.Println("delete not implemented") },
+		AddFunc:    n.onAdd(ctx),
+		UpdateFunc: n.onUpdate(ctx),
+		DeleteFunc: func(interface{}) { return },
 	})
 
 	// start informer ->
-	go factory.Start(ctx.Done())
+	go informerFactory.Start(ctx.Done())
 
 	// start to sync and call list
 	if !cache.WaitForCacheSync(ctx.Done(), informer.HasSynced) {
-		// runtime.HandleError()
 		return errors.New("timed out waiting for caches to sync")
 	}
 
-	// // TODO: find all namespaces
-	// lister := namespaceInformer.Lister()
-
-	// namespaces, err := lister.List(labels.Everything())
-	// if err != nil {
-	// 	return errors.New("could not list namespaces")
-	// }
-
-	// watchedNamespacesNames := make([]string, 0)
-	// watchedNamespaces := make([]*corev1.Namespace, 0)
-	// namespacesMap := make(logs.Fields)
-	// for _, ns := range namespaces {
-	// 	if isWatched(ns.Name, config.WatchNamespaces) {
-	// 		watchedNamespacesNames = append(watchedNamespacesNames, ns.Name)
-	// 		watchedNamespaces = append(watchedNamespaces, ns)
-	// 		namespacesMap[ns.Name] = ns
-	// 	}
-
-	// }
-	// n.logger.WithField("WatchedNamespaces", watchedNamespacesNames).Info("Trololo")
-	// n.logger.WithFields(namespacesMap).Info("Trololololo2")
-
-	watchedNamespaces, err := listWatchedNamespaces(namespaceInformer, config)
+	watchedNamespaces, err := listWatchedNamespaces(namespaceInformer, Config)
 	if err != nil {
 		return errors.New("Could not list namespaces")
 	}
 
-	// fmt.Println(watchedNamespaces[0].ObjectMeta.Name)
+	fmt.Println("[DEBUG]: watchedNamespaces count now: ", len(watchedNamespaces))
 
-	err = ensureLabeled(ctx, n.client, watchedNamespaces, config)
+	err = ensureAnnotated(ctx, n.client, watchedNamespaces, Config)
 	if err != nil {
 		n.logger.Error(err)
 	}
 
-	defDecomissionTimestamp(watchedNamespaces[0], config.RetentionTime)
-
 	return nil
 }
 
-func (n *NsInformer) onAdd(obj interface{}) {
+func (n *NsInformer) onAdd(ctx context.Context) func(interface{}) {
 
-	namespace := obj.(*corev1.Namespace)
-	// n.logger.Info("NsInformer cache is resynced with namespace: ", namespace.ObjectMeta.Name)
-	fmt.Println("NsInformer cache is resynced with namespace: ", namespace.ObjectMeta.Name)
+	return func(obj interface{}) {
+		namespace := obj.(*corev1.Namespace)
+		if isWatched(namespace.Name, Config.WatchNamespaces) {
+			ensureAnnotated(ctx, n.client, []*corev1.Namespace{namespace}, Config)
+		}
+	}
+}
 
-	// if isWatched(namespace.ObjectMeta.Name, Config.WatchedNamespaces) {
-	// 	fmt.Println("WATCHED!")
-	// }
+func (n *NsInformer) onUpdate(ctx context.Context) func(interface{}, interface{}) {
+	return func(oldObj interface{}, newObj interface{}) {
+		newNamespace := newObj.(*corev1.Namespace)
+		if isWatched(newNamespace.Name, Config.WatchNamespaces) {
 
+			// TODO: Probably we could just copy annotation
+			ensureAnnotated(ctx, n.client, []*corev1.Namespace{newNamespace}, Config)
+		}
+	}
 }
 
 func listWatchedNamespaces(informer v1.NamespaceInformer, config utils.Config) (namespaces []*corev1.Namespace, err error) {
@@ -136,7 +126,8 @@ func isWatched(nsName string, watchedNs []string) bool {
 	return isMatched
 }
 
-func ensureLabeled(context context.Context, client *kubernetes.Clientset, namespaces []*corev1.Namespace, config utils.Config) error {
+// TODO: Might be a good idea to decompose is down on two funcs: isAnnotated and Annotate.
+func ensureAnnotated(context context.Context, client *kubernetes.Clientset, namespaces []*corev1.Namespace, config utils.Config) error {
 	for _, ns := range namespaces {
 		annotations := getNsAnnotations(ns)
 		_, ok := annotations[config.DeletionAnnotationKey]
@@ -174,6 +165,7 @@ func getNsAnnotations(ns *corev1.Namespace) map[string]string {
 	return ns.ObjectMeta.Annotations
 }
 
+// TODO: Andd hours in config for retention fine-tuning.
 func defDecomissionTimestamp(ns *corev1.Namespace, retention int) time.Time {
 	createdAt := getNsCreationTimestamp(ns)
 

@@ -2,7 +2,8 @@ namespaces:
   - review
   - feature
 
-# Retention defined in days. 
+# Retention defined in days.
+# TODO: Andd hours in config for retention fine-tuning. 
 retention: 1
 
 annotation_key: delete_after
