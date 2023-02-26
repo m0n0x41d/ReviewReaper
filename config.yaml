@@ -3,7 +3,16 @@ namespaces:
   - feature
 
 # Retention defined in days.
-# TODO: Andd hours in config for retention fine-tuning. 
-retention: 1
+# TODO: Andd hours in config for retention fine-tuning.
+retention:
+  days: 1
+  hours: 2
 
-annotation_key: delete_after
+# annotation_key: delete_after
+
+deletion_windows:
+  not_before: "07:00"
+  not_after:  "16:00"
+  week_days:
+    - Sun
+    - Mon

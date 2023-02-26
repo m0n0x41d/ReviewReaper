@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -28,6 +29,8 @@ func main() {
 		logger.Fatal("Could not load config.yaml, aborting.")
 	}
 
+	fmt.Printf("%+v\n", config)
+
 	logger.Info("Will watch for namespaces with prefixes: ", config.WatchNamespaces)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -43,8 +46,8 @@ func main() {
 		logger.WithError(err).Fatal("Could not make client.")
 	}
 
-	newInformer := namespaces_informer.NewNsInformer(clusterClient, logger)
-	if err := newInformer.Run(ctx, config); err != nil {
+	newInformer := namespaces_informer.NewNsInformer(clusterClient, logger, config)
+	if err := newInformer.Run(ctx); err != nil {
 		logger.WithError(err).Fatal("Could not start informer.")
 	}
 
