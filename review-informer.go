@@ -31,7 +31,7 @@ func main() {
 
 	fmt.Printf("%+v\n", config)
 
-	logger.Info("Will watch for namespaces with prefixes: ", config.WatchNamespaces)
+	logger.Info("Will watch for namespaces with prefixes: ", config.NamespacePrefixes)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()

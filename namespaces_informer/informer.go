@@ -20,6 +20,10 @@ import (
 )
 
 // pass this in struct below. Make corresponding functions struct methods.
+const (
+	HH_MM        = "15:04"
+	RFC3339local = "2006-01-02T15:04:05Z"
+)
 
 type NsInformer struct {
 	client *kubernetes.Clientset
@@ -62,9 +66,7 @@ func (n *NsInformer) Run(ctx context.Context) error {
 		return errors.New("timed out waiting for caches to sync")
 	}
 
-	n.testLister(namespaceLister)
-
-	n.DeletionTicker()
+	n.DeletionTicker(namespaceLister)
 
 	// 1. Проверgить что onAdd втоматом делает ensure на старте информера DONE
 	// 2. Передавать листер в горутину тикер. OK FINE
@@ -79,7 +81,7 @@ func (n *NsInformer) onAdd(ctx context.Context) func(interface{}) {
 
 	return func(obj interface{}) {
 		namespace := obj.(*corev1.Namespace)
-		if isWatched(namespace.Name, n.config.WatchNamespaces) {
+		if isWatched(namespace.Name, n.config.NamespacePrefixes) {
 			n.ensureAnnotated(ctx, n.client, namespace)
 		}
 	}
@@ -91,30 +93,12 @@ func (n *NsInformer) onUpdate(ctx context.Context) func(interface{}, interface{}
 		newNamespace := newObj.(*corev1.Namespace)
 
 		fmt.Println("Hey buddy we got some event here in namespace: ", newNamespace.Name)
-		if isWatched(newNamespace.Name, n.config.WatchNamespaces) {
+		if isWatched(newNamespace.Name, n.config.NamespacePrefixes) {
 
 			// TODO: Probably we could just copy annotation
 			n.ensureAnnotated(ctx, n.client, newNamespace)
 		}
 	}
-}
-
-func (n *NsInformer) listWatchedNamespaces(lister v1.NamespaceLister) (namespaces []*corev1.Namespace, err error) {
-	watchedNamespaces := make([]*corev1.Namespace, 0)
-
-	namespaces, err = lister.List(labels.Everything())
-	if err != nil {
-		return watchedNamespaces, errors.New("could not list namespaces")
-	}
-
-	for _, ns := range namespaces {
-		if isWatched(ns.Name, n.config.WatchNamespaces) {
-			watchedNamespaces = append(watchedNamespaces, ns)
-		}
-
-	}
-	return watchedNamespaces, err
-
 }
 
 func isWatched(nsName string, watchedNs []string) bool {
@@ -130,12 +114,12 @@ func isWatched(nsName string, watchedNs []string) bool {
 
 // TODO: Might be a good idea to decompose is down on two funcs: isAnnotated and Annotate.
 // TODO: It alway get one namespace no need to pass list you dumbass
-func (n *NsInformer) ensureAnnotated(context context.Context, client *kubernetes.Clientset, ns *corev1.Namespace) error {
+func (n *NsInformer) ensureAnnotated(ctx context.Context, client *kubernetes.Clientset, ns *corev1.Namespace) error {
 	annotations := getNsAnnotations(ns)
-	_, ok := annotations[n.config.DeletionAnnotationKey]
+	_, ok := annotations[n.config.AnnotationKey]
 	if !ok {
 
-		decommissionTimestamp := defDecomissionTimestamp(ns, n.config.RetentionDays).UTC().Format(time.RFC3339)
+		decommissionTimestamp := n.defDecomissionTimestamp(ns).UTC().Format(time.RFC3339)
 		newNs := ns.DeepCopy()
 		annotations := newNs.ObjectMeta.Annotations
 
@@ -143,12 +127,12 @@ func (n *NsInformer) ensureAnnotated(context context.Context, client *kubernetes
 			annotations = make(map[string]string)
 		}
 
-		annotations[n.config.DeletionAnnotationKey] = decommissionTimestamp
+		annotations[n.config.AnnotationKey] = decommissionTimestamp
 
 		newNs.ObjectMeta.Annotations = annotations
 
 		updateOptions := metav1.UpdateOptions{}
-		_, err := client.CoreV1().Namespaces().Update(context, newNs, updateOptions)
+		_, err := client.CoreV1().Namespaces().Update(ctx, newNs, updateOptions)
 
 		if err != nil {
 			return err
@@ -167,35 +151,24 @@ func getNsAnnotations(ns *corev1.Namespace) map[string]string {
 }
 
 // TODO: Andd hours in config for retention fine-tuning.
-func defDecomissionTimestamp(ns *corev1.Namespace, retention int) time.Time {
+func (n *NsInformer) defDecomissionTimestamp(ns *corev1.Namespace) time.Time {
 	createdAt := getNsCreationTimestamp(ns)
 
-	var timeout time.Duration
-	timeout = time.Duration(retention)
-	decommissionTimestamp := createdAt.Add(time.Hour * 24 * timeout)
+	retentionDays := n.config.RetentionDays
+	retentionHours := n.config.RetentionHours
 
-	// fmt.Println(decommissionTimestamp.UTC().Format(time.RFC3339))
+	timeoutDays := time.Duration(retentionDays)
+	decommissionTimestamp := createdAt.Add(time.Hour * 24 * timeoutDays)
+
+	if retentionHours > 0 {
+		timeoutHours := time.Duration(retentionHours)
+		decommissionTimestamp = decommissionTimestamp.Add(time.Hour * timeoutHours)
+	}
+
 	return decommissionTimestamp
 }
 
-func (n *NsInformer) testLister(lister v1.NamespaceLister) (err error) {
-
-	namespaces, err := lister.List(labels.Everything())
-	if err != nil {
-		return err
-	}
-
-	watchedNs, err := n.listWatchedNamespaces(lister)
-	if err != nil {
-		fmt.Println(err)
-	}
-	fmt.Printf("Lister got %d namespaces\n", len(namespaces))
-	fmt.Printf("Watche among them: %d\n", len(watchedNs))
-
-	return nil
-}
-
-func (n *NsInformer) DeletionTicker() {
+func (n *NsInformer) DeletionTicker(lister v1.NamespaceLister) {
 	ticker := time.NewTicker(3 * time.Second)
 	done := make(chan bool)
 
@@ -206,22 +179,93 @@ func (n *NsInformer) DeletionTicker() {
 				return
 			case t := <-ticker.C:
 				if n.isAllowedWindow(t) {
-					fmt.Println("WINDOW IS GREEN, LETS ROCK AND DELETE SOME BITCHES!")
+					expiredNamespaces, err := n.getExpiredNamespaces(lister)
+					if err != nil {
+						// TODO: log me here
+						fmt.Println("[WARN] could not list watched namespaces for deletion with error: ", err.Error())
+					}
+
+					fmt.Println("Expired namespaces: ", expiredNamespaces)
+					// TODO: Make nsDelete method and delete expired here. Make two methods for future. 1 - DeleteNamespaces (it will take namespaces list and batch with sleep from config)
+					// TODO: 2 - delete specific namespace
+
 				}
 			}
 		}
 	}()
 }
 
+func (n *NsInformer) deleteNamespaces(ctx context.Context, client *kubernetes.Clientset, namespaces []*corev1.Namespace) error {
+
+	batchSize := n.config.DeletionBatchSize
+	napSeconds := time.Duration(n.config.DeletionNapSeconds) * time.Second
+
+	for i := 0; i < len(namespaces); i += batchSize {
+		batchTail := i + batchSize
+		if batchTail > len(namespaces) {
+			batchTail = len(namespaces)
+		}
+		batch := namespaces[i:batchTail]
+
+		fmt.Println(batch)
+		// Process the batch of items
+		// processBatch(batch)
+
+		time.Sleep(napSeconds)
+	}
+
+	return nil
+}
+
+func (n *NsInformer) getExpiredNamespaces(lister v1.NamespaceLister) (expiredNamespaces []*corev1.Namespace, err error) {
+	timeNow := time.Now().UTC()
+	watchedNamespaces, err := n.listWatchedNamespaces(lister)
+	if err != nil {
+		return expiredNamespaces, err
+	}
+
+	for _, ns := range watchedNamespaces {
+		timeStampAnnotation := ns.Annotations[n.config.AnnotationKey]
+		nsDeletionTimespamp, err := time.Parse(RFC3339local, timeStampAnnotation)
+		if err != nil {
+			return expiredNamespaces, err
+		}
+
+		if nsDeletionTimespamp.Before(timeNow) {
+			expiredNamespaces = append(expiredNamespaces, ns)
+		}
+	}
+
+	return expiredNamespaces, nil
+}
+
+func (n *NsInformer) listWatchedNamespaces(lister v1.NamespaceLister) (namespaces []*corev1.Namespace, err error) {
+	watchedNamespaces := make([]*corev1.Namespace, 0)
+
+	namespaces, err = lister.List(labels.Everything())
+	if err != nil {
+		return watchedNamespaces, errors.New("could not list namespaces")
+	}
+
+	for _, ns := range namespaces {
+		if isWatched(ns.Name, n.config.NamespacePrefixes) {
+			watchedNamespaces = append(watchedNamespaces, ns)
+		}
+
+	}
+	return watchedNamespaces, err
+
+}
+
 func (n *NsInformer) isAllowedWindow(t time.Time) bool {
-	const HH_MM = "15:04"
+
 	isAllowed := false
 
-	nbCfg := n.config.MaintenanceWindow.NotBefore
-	naCfg := n.config.MaintenanceWindow.NotAfter
+	nbCfg := n.config.DeletionWindow.NotBefore
+	naCfg := n.config.DeletionWindow.NotAfter
 
 	todayWeekday := t.UTC().Weekday().String()[0:3]
-	weekdayOk := utils.IsContains(n.config.MaintenanceWindow.WeekDays, todayWeekday)
+	weekdayOk := utils.IsContains(n.config.DeletionWindow.WeekDays, todayWeekday)
 
 	if weekdayOk == false {
 		return isAllowed
