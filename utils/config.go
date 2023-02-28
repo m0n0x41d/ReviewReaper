@@ -5,6 +5,7 @@ import (
 	"github.com/spf13/viper"
 )
 
+// TODO: Check if rest of the fields also can be validated
 type Config struct {
 	NamespacePrefixes  []string
 	RetentionDays      int `validate:"gte=0"`
@@ -47,6 +48,9 @@ func LoadConfig() (config Config, err error) {
 	config.NamespacePrefixes = viper.GetStringSlice("namespace_prefixes")
 	config.RetentionDays = viper.GetInt("retention.days")
 	config.RetentionHours = viper.GetInt("retention.hours")
+
+	config.DeletionBatchSize = viper.GetInt("deletion_batch_size")
+	config.DeletionNapSeconds = viper.GetInt("deletion_nap_seconds")
 
 	config.IsDeleteByRelease = viper.GetBool("delete_by_release")
 	config.AnnotationKey = viper.GetString("annotation_key")

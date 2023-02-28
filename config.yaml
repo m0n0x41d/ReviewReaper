@@ -8,6 +8,9 @@ retention:
   days: 1
   hours: 2
 
+# deletion_batch_size: 1
+# deletion_nap_seconds: 1
+
 annotation_key: delete_after
 delete_by_release: false
 

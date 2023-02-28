@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -11,12 +12,15 @@ import (
 	"github.com/NaNameUz3r/review_autostop_service/utils"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	v1 "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
+
+	helmclient "github.com/mittwald/go-helm-client"
 )
 
 // pass this in struct below. Make corresponding functions struct methods.
@@ -66,7 +70,7 @@ func (n *NsInformer) Run(ctx context.Context) error {
 		return errors.New("timed out waiting for caches to sync")
 	}
 
-	n.DeletionTicker(namespaceLister)
+	n.DeletionTicker(ctx, namespaceLister)
 
 	// 1. Проверgить что onAdd втоматом делает ensure на старте информера DONE
 	// 2. Передавать листер в горутину тикер. OK FINE
@@ -92,7 +96,6 @@ func (n *NsInformer) onUpdate(ctx context.Context) func(interface{}, interface{}
 	return func(oldObj interface{}, newObj interface{}) {
 		newNamespace := newObj.(*corev1.Namespace)
 
-		fmt.Println("Hey buddy we got some event here in namespace: ", newNamespace.Name)
 		if isWatched(newNamespace.Name, n.config.NamespacePrefixes) {
 
 			// TODO: Probably we could just copy annotation
@@ -168,8 +171,8 @@ func (n *NsInformer) defDecomissionTimestamp(ns *corev1.Namespace) time.Time {
 	return decommissionTimestamp
 }
 
-func (n *NsInformer) DeletionTicker(lister v1.NamespaceLister) {
-	ticker := time.NewTicker(3 * time.Second)
+func (n *NsInformer) DeletionTicker(ctx context.Context, lister v1.NamespaceLister) {
+	ticker := time.NewTicker(5 * time.Second)
 	done := make(chan bool)
 
 	go func() {
@@ -188,6 +191,7 @@ func (n *NsInformer) DeletionTicker(lister v1.NamespaceLister) {
 					fmt.Println("Expired namespaces: ", expiredNamespaces)
 					// TODO: Make nsDelete method and delete expired here. Make two methods for future. 1 - DeleteNamespaces (it will take namespaces list and batch with sleep from config)
 					// TODO: 2 - delete specific namespace
+					n.processExpiredNamespaces(ctx, expiredNamespaces)
 
 				}
 			}
@@ -195,10 +199,14 @@ func (n *NsInformer) DeletionTicker(lister v1.NamespaceLister) {
 	}()
 }
 
-func (n *NsInformer) deleteNamespaces(ctx context.Context, client *kubernetes.Clientset, namespaces []*corev1.Namespace) error {
+func (n *NsInformer) processExpiredNamespaces(ctx context.Context, namespaces []*corev1.Namespace) error {
 
 	batchSize := n.config.DeletionBatchSize
 	napSeconds := time.Duration(n.config.DeletionNapSeconds) * time.Second
+
+	if batchSize == 0 {
+		batchSize = len(namespaces)
+	}
 
 	for i := 0; i < len(namespaces); i += batchSize {
 		batchTail := i + batchSize
@@ -207,13 +215,91 @@ func (n *NsInformer) deleteNamespaces(ctx context.Context, client *kubernetes.Cl
 		}
 		batch := namespaces[i:batchTail]
 
-		fmt.Println(batch)
-		// Process the batch of items
-		// processBatch(batch)
+		// Process the batch of namespaces
+		err := n.deleteNamespaces(ctx, batch)
+		if err != nil {
+			// TODO: Log me here
+			return err
+		}
 
 		time.Sleep(napSeconds)
 	}
 
+	return nil
+}
+
+func (n *NsInformer) deleteNamespaces(ctx context.Context, namespaces []*corev1.Namespace) error {
+
+	deleteOptions := metav1.DeleteOptions{}
+	for _, ns := range namespaces {
+
+		if n.config.IsDeleteByRelease {
+			// TODO: Implement Helm Release deletion here
+			// n.deleteNamespaceReleases(ns)
+
+			// TODO: Fix unreachable
+			// return nil
+		}
+		err := n.client.CoreV1().Namespaces().Delete(ctx, ns.Name, deleteOptions)
+		if err != nil {
+			// If the namespace is already deleted, return without error.
+			if apierrors.IsNotFound(err) {
+				return nil
+			}
+			return fmt.Errorf("failed to delete namespace %s: %s", ns.Name, err)
+		}
+
+		// TODO: log me here
+
+		fmt.Printf("Namespase %d delete successfully.", ns.Name)
+
+	}
+	return nil
+}
+
+func (n *NsInformer) deleteNamespaceReleases(namespace *corev1.Namespace) error {
+	// settings := cli.New()
+
+	// actionConfig := new(action.Configuration)
+	// if err := actionConfig.Init(settings.RESTClientGetter(), namespace.Name, os.Getenv("HELM_DRIVER"), log.Printf); err != nil {
+	// 	n.logger.Error("Could not load helm config", err)
+	// 	os.Exit(1)
+	// }
+
+	// client := action.NewList(actionConfig)
+	// // Only list deployed
+	// client.Deployed = true
+	// results, err := client.Run()
+	// if err != nil {
+	// 	n.logger.Error("Could not list helm releases", err)
+	// 	os.Exit(1)
+	// }
+
+	// for _, rel := range results {
+	// 	n.logger.Info("RELEASE FOUND:", rel)
+	// }
+	// return nil
+
+	opt := &helmclient.KubeConfClientOptions{
+		Options: &helmclient.Options{
+			Namespace:        namespace.Name, // Change this to the namespace you wish to install the chart in.
+			RepositoryCache:  "/tmp/.helmcache",
+			RepositoryConfig: "/tmp/.helmrepo",
+			Debug:            true,
+			Linting:          true, // Change this to false if you don't want linting.
+			DebugLog: func(format string, v ...interface{}) {
+				// Change this to your own logger. Default is 'log.Printf(format, v...)'.
+			},
+		},
+		KubeContext: "",
+		KubeConfig:  []byte(os.Getenv("KUBECONFIG")),
+	}
+
+	helmClient, err := helmclient.NewClientFromKubeConf(opt)
+	if err != nil {
+		panic(err)
+	}
+	_ = helmClient
 	return nil
 }
 

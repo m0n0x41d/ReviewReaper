@@ -26,29 +26,28 @@ func main() {
 
 	config, err := utils.LoadConfig()
 	if err != nil {
-		logger.Fatal("Could not load config.yaml, aborting.")
+		// logger.Fatal("Could not load config.yaml, aborting.")
+		logger.Error("Could not load config.yaml, aborting.", err)
 	}
 
-	fmt.Printf("%+v\n", config)
-
-	logger.Info("Will watch for namespaces with prefixes: ", config.NamespacePrefixes)
+	logger.Info(fmt.Sprintf("Will watch for namespaces with prefixes: %s", config.NamespacePrefixes))
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
 	clusterConfig, err := setClusterConfig()
 	if err != nil {
-		logger.WithError(err).Fatal("Could not get ClusterConfig")
+		logger.Error("Could not get ClusterConfig", err)
 	}
 
 	clusterClient, err := kubernetes.NewForConfig(clusterConfig)
 	if err != nil {
-		logger.WithError(err).Fatal("Could not make client.")
+		logger.Error("Could not make client", err)
 	}
 
 	newInformer := namespaces_informer.NewNsInformer(clusterClient, logger, config)
 	if err := newInformer.Run(ctx); err != nil {
-		logger.WithError(err).Fatal("Could not start informer.")
+		logger.Error("Could not start informer", err)
 	}
 
 	<-ctx.Done()
