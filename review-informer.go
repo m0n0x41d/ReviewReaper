@@ -19,18 +19,15 @@ import (
 	_ "k8s.io/client-go/plugin/pkg/client/auth/oidc"
 )
 
-var ()
-
 func main() {
-	logger := logs.NewLogger()
 
-	config, err := utils.LoadConfig()
+	appConfig, err := utils.LoadConfig()
 	if err != nil {
-		// logger.Fatal("Could not load config.yaml, aborting.")
-		logger.Error("Could not load config.yaml, aborting.", err)
+		panic("Could not load config.yaml, aborting.")
 	}
 
-	logger.Info(fmt.Sprintf("Will watch for namespaces with prefixes: %s", config.NamespacePrefixes))
+	logger := logs.NewLogger(appConfig)
+	logger.Info(fmt.Sprintf("Will watch for namespaces with prefixes: %s", appConfig.NamespacePrefixes))
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -45,7 +42,7 @@ func main() {
 		logger.Error("Could not make client", err)
 	}
 
-	newInformer := namespaces_informer.NewNsInformer(clusterClient, logger, config)
+	newInformer := namespaces_informer.NewNsInformer(clusterConfig, clusterClient, logger, appConfig)
 	if err := newInformer.Run(ctx); err != nil {
 		logger.Error("Could not start informer", err)
 	}

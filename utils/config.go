@@ -19,6 +19,8 @@ type Config struct {
 		NotAfter  string
 		WeekDays  []string
 	}
+
+	LogLevel string
 }
 
 var validate = validator.New()
@@ -44,6 +46,7 @@ func LoadConfig() (config Config, err error) {
 	viper.SetDefault("deletion_windows.not_after", "07:00")
 	viper.SetDefault("deletion_windows.week_days", []string{"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"})
 	viper.SetDefault("annotation_key", "delete_after")
+	viper.SetDefault("log_level", "INFO")
 
 	config.NamespacePrefixes = viper.GetStringSlice("namespace_prefixes")
 	config.RetentionDays = viper.GetInt("retention.days")
@@ -58,6 +61,8 @@ func LoadConfig() (config Config, err error) {
 	config.DeletionWindow.NotBefore = viper.GetString("deletion_windows.not_before")
 	config.DeletionWindow.NotAfter = viper.GetString("deletion_windows.not_after")
 	config.DeletionWindow.WeekDays = viper.GetStringSlice("deletion_windows.week_days")
+
+	config.LogLevel = viper.GetString("log_level")
 
 	// safeChecks
 

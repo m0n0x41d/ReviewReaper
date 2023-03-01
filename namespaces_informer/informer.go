@@ -3,14 +3,16 @@ package namespaces_informer
 import (
 	"context"
 	"errors"
-	"fmt"
-	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/NaNameUz3r/review_autostop_service/logs"
 	"github.com/NaNameUz3r/review_autostop_service/utils"
+	"helm.sh/helm/v3/pkg/action"
+	"helm.sh/helm/v3/pkg/cli"
 
+	"helm.sh/helm/v3/pkg/release"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -18,9 +20,8 @@ import (
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	v1 "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
-
-	helmclient "github.com/mittwald/go-helm-client"
 )
 
 // pass this in struct below. Make corresponding functions struct methods.
@@ -30,16 +31,18 @@ const (
 )
 
 type NsInformer struct {
-	client *kubernetes.Clientset
-	logger logs.Logger
-	config utils.Config
+	restConfig *rest.Config
+	client     *kubernetes.Clientset
+	logger     logs.Logger
+	appConfig  utils.Config
 }
 
-func NewNsInformer(client *kubernetes.Clientset, logger logs.Logger, config utils.Config) *NsInformer {
+func NewNsInformer(restConfig *rest.Config, client *kubernetes.Clientset, logger logs.Logger, appConfig utils.Config) *NsInformer {
 	return &NsInformer{
-		client: client,
-		logger: logger,
-		config: config,
+		restConfig: restConfig,
+		client:     client,
+		logger:     logger,
+		appConfig:  appConfig,
 	}
 }
 
@@ -85,7 +88,7 @@ func (n *NsInformer) onAdd(ctx context.Context) func(interface{}) {
 
 	return func(obj interface{}) {
 		namespace := obj.(*corev1.Namespace)
-		if isWatched(namespace.Name, n.config.NamespacePrefixes) {
+		if isWatched(namespace.Name, n.appConfig.NamespacePrefixes) {
 			n.ensureAnnotated(ctx, n.client, namespace)
 		}
 	}
@@ -96,7 +99,7 @@ func (n *NsInformer) onUpdate(ctx context.Context) func(interface{}, interface{}
 	return func(oldObj interface{}, newObj interface{}) {
 		newNamespace := newObj.(*corev1.Namespace)
 
-		if isWatched(newNamespace.Name, n.config.NamespacePrefixes) {
+		if isWatched(newNamespace.Name, n.appConfig.NamespacePrefixes) {
 
 			// TODO: Probably we could just copy annotation
 			n.ensureAnnotated(ctx, n.client, newNamespace)
@@ -119,7 +122,7 @@ func isWatched(nsName string, watchedNs []string) bool {
 // TODO: It alway get one namespace no need to pass list you dumbass
 func (n *NsInformer) ensureAnnotated(ctx context.Context, client *kubernetes.Clientset, ns *corev1.Namespace) error {
 	annotations := getNsAnnotations(ns)
-	_, ok := annotations[n.config.AnnotationKey]
+	_, ok := annotations[n.appConfig.AnnotationKey]
 	if !ok {
 
 		decommissionTimestamp := n.defDecomissionTimestamp(ns).UTC().Format(time.RFC3339)
@@ -130,7 +133,7 @@ func (n *NsInformer) ensureAnnotated(ctx context.Context, client *kubernetes.Cli
 			annotations = make(map[string]string)
 		}
 
-		annotations[n.config.AnnotationKey] = decommissionTimestamp
+		annotations[n.appConfig.AnnotationKey] = decommissionTimestamp
 
 		newNs.ObjectMeta.Annotations = annotations
 
@@ -157,8 +160,8 @@ func getNsAnnotations(ns *corev1.Namespace) map[string]string {
 func (n *NsInformer) defDecomissionTimestamp(ns *corev1.Namespace) time.Time {
 	createdAt := getNsCreationTimestamp(ns)
 
-	retentionDays := n.config.RetentionDays
-	retentionHours := n.config.RetentionHours
+	retentionDays := n.appConfig.RetentionDays
+	retentionHours := n.appConfig.RetentionHours
 
 	timeoutDays := time.Duration(retentionDays)
 	decommissionTimestamp := createdAt.Add(time.Hour * 24 * timeoutDays)
@@ -176,33 +179,39 @@ func (n *NsInformer) DeletionTicker(ctx context.Context, lister v1.NamespaceList
 	done := make(chan bool)
 
 	go func() {
+		isActive := false
 		for {
-			select {
-			case <-done:
-				return
-			case t := <-ticker.C:
-				if n.isAllowedWindow(t) {
-					expiredNamespaces, err := n.getExpiredNamespaces(lister)
-					if err != nil {
-						// TODO: log me here
-						fmt.Println("[WARN] could not list watched namespaces for deletion with error: ", err.Error())
+			if !isActive {
+				select {
+				case <-done:
+					return
+				case t := <-ticker.C:
+					if n.isAllowedWindow(t) && !isActive {
+						isActive = true
+						expiredNamespaces, err := n.getExpiredNamespaces(lister)
+						if err != nil {
+							n.logger.Error("Could not list watched namespaces for deletion", err)
+						}
+
+						n.logger.Info("Expired namespaces found", "count", len(expiredNamespaces))
+						err = n.processExpiredNamespaces(ctx, expiredNamespaces)
+						if err != nil {
+							n.logger.Error("Could not process expired namespaces", err)
+						}
+						time.Sleep(5 * time.Second)
+						isActive = false
 					}
-
-					fmt.Println("Expired namespaces: ", expiredNamespaces)
-					// TODO: Make nsDelete method and delete expired here. Make two methods for future. 1 - DeleteNamespaces (it will take namespaces list and batch with sleep from config)
-					// TODO: 2 - delete specific namespace
-					n.processExpiredNamespaces(ctx, expiredNamespaces)
-
 				}
 			}
+			continue
 		}
 	}()
 }
 
 func (n *NsInformer) processExpiredNamespaces(ctx context.Context, namespaces []*corev1.Namespace) error {
 
-	batchSize := n.config.DeletionBatchSize
-	napSeconds := time.Duration(n.config.DeletionNapSeconds) * time.Second
+	batchSize := n.appConfig.DeletionBatchSize
+	napSeconds := time.Duration(n.appConfig.DeletionNapSeconds) * time.Second
 
 	if batchSize == 0 {
 		batchSize = len(namespaces)
@@ -218,7 +227,7 @@ func (n *NsInformer) processExpiredNamespaces(ctx context.Context, namespaces []
 		// Process the batch of namespaces
 		err := n.deleteNamespaces(ctx, batch)
 		if err != nil {
-			// TODO: Log me here
+			n.logger.Error("Could not delete namespaces", err)
 			return err
 		}
 
@@ -229,16 +238,11 @@ func (n *NsInformer) processExpiredNamespaces(ctx context.Context, namespaces []
 }
 
 func (n *NsInformer) deleteNamespaces(ctx context.Context, namespaces []*corev1.Namespace) error {
-
 	deleteOptions := metav1.DeleteOptions{}
 	for _, ns := range namespaces {
 
-		if n.config.IsDeleteByRelease {
-			// TODO: Implement Helm Release deletion here
-			// n.deleteNamespaceReleases(ns)
-
-			// TODO: Fix unreachable
-			// return nil
+		if n.appConfig.IsDeleteByRelease {
+			n.deleteNamespaceReleases(ctx, ns)
 		}
 		err := n.client.CoreV1().Namespaces().Delete(ctx, ns.Name, deleteOptions)
 		if err != nil {
@@ -246,60 +250,48 @@ func (n *NsInformer) deleteNamespaces(ctx context.Context, namespaces []*corev1.
 			if apierrors.IsNotFound(err) {
 				return nil
 			}
-			return fmt.Errorf("failed to delete namespace %s: %s", ns.Name, err)
+			return err
 		}
-
-		// TODO: log me here
-
-		fmt.Printf("Namespase %d delete successfully.", ns.Name)
+		n.logger.Info("Namespace", ns.Name, "Deleted.")
 
 	}
 	return nil
 }
 
-func (n *NsInformer) deleteNamespaceReleases(namespace *corev1.Namespace) error {
-	// settings := cli.New()
+func (n *NsInformer) deleteNamespaceReleases(ctx context.Context, namespace *corev1.Namespace) error {
 
-	// actionConfig := new(action.Configuration)
-	// if err := actionConfig.Init(settings.RESTClientGetter(), namespace.Name, os.Getenv("HELM_DRIVER"), log.Printf); err != nil {
-	// 	n.logger.Error("Could not load helm config", err)
-	// 	os.Exit(1)
-	// }
+	settings := cli.New()
+	settings.SetNamespace(namespace.Name)
+	actionConfig := new(action.Configuration)
 
-	// client := action.NewList(actionConfig)
-	// // Only list deployed
-	// client.Deployed = true
-	// results, err := client.Run()
-	// if err != nil {
-	// 	n.logger.Error("Could not list helm releases", err)
-	// 	os.Exit(1)
-	// }
-
-	// for _, rel := range results {
-	// 	n.logger.Info("RELEASE FOUND:", rel)
-	// }
-	// return nil
-
-	opt := &helmclient.KubeConfClientOptions{
-		Options: &helmclient.Options{
-			Namespace:        namespace.Name, // Change this to the namespace you wish to install the chart in.
-			RepositoryCache:  "/tmp/.helmcache",
-			RepositoryConfig: "/tmp/.helmrepo",
-			Debug:            true,
-			Linting:          true, // Change this to false if you don't want linting.
-			DebugLog: func(format string, v ...interface{}) {
-				// Change this to your own logger. Default is 'log.Printf(format, v...)'.
-			},
-		},
-		KubeContext: "",
-		KubeConfig:  []byte(os.Getenv("KUBECONFIG")),
+	if err := actionConfig.Init(settings.RESTClientGetter(), settings.Namespace(), "secret", n.logger.Debug); err != nil {
+		n.logger.Error("Could not initialize helm action config", err)
+		return err
 	}
 
-	helmClient, err := helmclient.NewClientFromKubeConf(opt)
+	listAction := action.NewList(actionConfig)
+
+	releases, err := listAction.Run()
 	if err != nil {
-		panic(err)
+		n.logger.Error("Could not list releases", err)
+		return err
 	}
-	_ = helmClient
+
+	deleteAction := action.NewUninstall(actionConfig)
+	deleteAction.DisableHooks = false
+
+	wg := &sync.WaitGroup{}
+
+	for _, r := range releases {
+		wg.Add(1)
+		go func(r *release.Release, wg *sync.WaitGroup) {
+			deleteAction.Run(r.Name)
+			n.logger.Info("Uninstalling helm release", "name", r.Name, "from namespace", namespace.Name)
+			wg.Done()
+		}(r, wg)
+	}
+	wg.Wait()
+
 	return nil
 }
 
@@ -311,7 +303,7 @@ func (n *NsInformer) getExpiredNamespaces(lister v1.NamespaceLister) (expiredNam
 	}
 
 	for _, ns := range watchedNamespaces {
-		timeStampAnnotation := ns.Annotations[n.config.AnnotationKey]
+		timeStampAnnotation := ns.Annotations[n.appConfig.AnnotationKey]
 		nsDeletionTimespamp, err := time.Parse(RFC3339local, timeStampAnnotation)
 		if err != nil {
 			return expiredNamespaces, err
@@ -334,7 +326,7 @@ func (n *NsInformer) listWatchedNamespaces(lister v1.NamespaceLister) (namespace
 	}
 
 	for _, ns := range namespaces {
-		if isWatched(ns.Name, n.config.NamespacePrefixes) {
+		if isWatched(ns.Name, n.appConfig.NamespacePrefixes) {
 			watchedNamespaces = append(watchedNamespaces, ns)
 		}
 
@@ -347,11 +339,11 @@ func (n *NsInformer) isAllowedWindow(t time.Time) bool {
 
 	isAllowed := false
 
-	nbCfg := n.config.DeletionWindow.NotBefore
-	naCfg := n.config.DeletionWindow.NotAfter
+	nbCfg := n.appConfig.DeletionWindow.NotBefore
+	naCfg := n.appConfig.DeletionWindow.NotAfter
 
 	todayWeekday := t.UTC().Weekday().String()[0:3]
-	weekdayOk := utils.IsContains(n.config.DeletionWindow.WeekDays, todayWeekday)
+	weekdayOk := utils.IsContains(n.appConfig.DeletionWindow.WeekDays, todayWeekday)
 
 	if weekdayOk == false {
 		return isAllowed
