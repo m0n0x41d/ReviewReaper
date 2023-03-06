@@ -13,6 +13,7 @@ retention:
 
 annotation_key: delete_after
 delete_by_release: true
+postpone_deletion_if_active: true
 
 deletion_windows:
   not_before: "00:00"

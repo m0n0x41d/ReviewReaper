@@ -23,7 +23,8 @@ func main() {
 
 	appConfig, err := utils.LoadConfig()
 	if err != nil {
-		panic("Could not load config.yaml, aborting.")
+
+		panic(err)
 	}
 
 	logger := logs.NewLogger(appConfig)

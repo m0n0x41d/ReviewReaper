@@ -3,6 +3,7 @@ package namespaces_informer
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -19,7 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
-	v1 "k8s.io/client-go/listers/core/v1"
+	listers "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
 )
@@ -35,6 +36,9 @@ type NsInformer struct {
 	client     *kubernetes.Clientset
 	logger     logs.Logger
 	appConfig  utils.Config
+
+	nsLister     listers.NamespaceLister
+	eventsLister listers.EventLister
 }
 
 func NewNsInformer(restConfig *rest.Config, client *kubernetes.Clientset, logger logs.Logger, appConfig utils.Config) *NsInformer {
@@ -50,41 +54,43 @@ func (n *NsInformer) Run(ctx context.Context) error {
 
 	// TODO: this timeout should be changed on release -------------↓
 	informerFactory := informers.NewSharedInformerFactory(n.client, 0)
-	namespaceInformer := informerFactory.Core().V1().Namespaces().Informer()
-	namespaceLister := informerFactory.Core().V1().Namespaces().Lister()
 
-	// eventInformer := informerFactory.Core().V1().Events().Informer()
-	// eventsLister := informerFactory.Core().V1().Events().Lister()
+	factoryNsInformer := informerFactory.Core().V1().Namespaces()
+	namespaceInformer := factoryNsInformer.Informer()
+	namespaceLister := factoryNsInformer.Lister()
 
-	// TODO: Мы делаем onAdd и обновляем новый неймспейс, если он вотчится, с аннотацией.
-	// Мы в onUpdate чекаем не удалили ли случайно пользователи аннотацию с неймспейса, который мы вотчим, и пишем её снова, если удалили.
-	// Необходимо определить наиболее оптимальный способ релистануть все неймспейсы в шедуленной горутине-удоляторе. Пихать в неё namespaceInformer и делать list снова?
+	n.nsLister = namespaceLister
+
+	eventInformer := informerFactory.Core().V1().Events().Informer()
+	eventsLister := informerFactory.Core().V1().Events().Lister()
+
+	n.eventsLister = eventsLister
+
 	namespaceInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    n.onAdd(ctx),
-		UpdateFunc: n.onUpdate(ctx),
+		AddFunc:    n.onAddNamespace(ctx),
+		UpdateFunc: n.onUpdateNamespace(ctx),
+		DeleteFunc: func(interface{}) { return },
+	})
+
+	eventInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    n.onAddEvent(ctx),
+		UpdateFunc: func(interface{}, interface{}) { return },
 		DeleteFunc: func(interface{}) { return },
 	})
 
 	// start informer ->
 	go informerFactory.Start(ctx.Done())
-
 	// start to sync and call list
 	if !cache.WaitForCacheSync(ctx.Done(), namespaceInformer.HasSynced) {
 		return errors.New("timed out waiting for caches to sync")
 	}
 
-	n.DeletionTicker(ctx, namespaceLister)
+	n.DeletionTicker(ctx)
 
-	// 1. Проверgить что onAdd втоматом делает ensure на старте информера DONE
-	// 2. Передавать листер в горутину тикер. OK FINE
-	// 3. Узнать прилетает ли эвент при удалении или добавлении пода (любой эвент.) Если нет то надо хуярить информеры дополнительные.
-	// TODO: касаемо пункта 3 — нет, эвенты не вызывают onUpdate информера неймспейсов. Чтобы не делать кучу информеров на все ресурсы, можно попробовать сделать eventInformer который
-	// TODO: будет слушать все эвенты, и реагировать на эвенты у которых в ObjectMeta.Namespace неймспейс который мы вотчим (по префиксу снова проверяем.)
-	// TODO: смотреть за эвентами - хуйня. Эвенты может срать какой нибудь рэббитоператор, тогда как может ничего не выкатываться в неймспейс вообще неделями. Это не надежно.
 	return nil
 }
 
-func (n *NsInformer) onAdd(ctx context.Context) func(interface{}) {
+func (n *NsInformer) onAddNamespace(ctx context.Context) func(interface{}) {
 
 	return func(obj interface{}) {
 		namespace := obj.(*corev1.Namespace)
@@ -94,7 +100,7 @@ func (n *NsInformer) onAdd(ctx context.Context) func(interface{}) {
 	}
 }
 
-func (n *NsInformer) onUpdate(ctx context.Context) func(interface{}, interface{}) {
+func (n *NsInformer) onUpdateNamespace(ctx context.Context) func(interface{}, interface{}) {
 
 	return func(oldObj interface{}, newObj interface{}) {
 		newNamespace := newObj.(*corev1.Namespace)
@@ -104,6 +110,18 @@ func (n *NsInformer) onUpdate(ctx context.Context) func(interface{}, interface{}
 			// TODO: Probably we could just copy annotation
 			n.ensureAnnotated(ctx, n.client, newNamespace)
 		}
+	}
+}
+
+func (n *NsInformer) onAddEvent(ctx context.Context) func(interface{}) {
+	return func(obj interface{}) {
+		// watchedNamespacesNames, _ := n.listWatchedNamespacesNames(n.nsLister)
+		// event := obj.(*corev1.Event)
+
+		// if utils.IsContains(watchedNamespacesNames, event.ObjectMeta.Namespace) {
+		// 	fmt.Printf("GOT THIS EVENT FROM NAMESPACE %s", event.ObjectMeta.Namespace)
+		// 	fmt.Println(event.CreationTimestamp.UTC())
+		// }
 	}
 }
 
@@ -119,7 +137,7 @@ func isWatched(nsName string, watchedNs []string) bool {
 }
 
 // TODO: Might be a good idea to decompose is down on two funcs: isAnnotated and Annotate.
-// TODO: It alway get one namespace no need to pass list you dumbass
+// TODO: We need to be sure that annotation value (timestamp) not changed to some gibberish.
 func (n *NsInformer) ensureAnnotated(ctx context.Context, client *kubernetes.Clientset, ns *corev1.Namespace) error {
 	annotations := getNsAnnotations(ns)
 	_, ok := annotations[n.appConfig.AnnotationKey]
@@ -174,7 +192,7 @@ func (n *NsInformer) defDecomissionTimestamp(ns *corev1.Namespace) time.Time {
 	return decommissionTimestamp
 }
 
-func (n *NsInformer) DeletionTicker(ctx context.Context, lister v1.NamespaceLister) {
+func (n *NsInformer) DeletionTicker(ctx context.Context) {
 	ticker := time.NewTicker(5 * time.Second)
 	done := make(chan bool)
 
@@ -188,16 +206,24 @@ func (n *NsInformer) DeletionTicker(ctx context.Context, lister v1.NamespaceList
 				case t := <-ticker.C:
 					if n.isAllowedWindow(t) && !isActive {
 						isActive = true
-						expiredNamespaces, err := n.getExpiredNamespaces(lister)
+
+						watchedNamespaces, err := n.listWatchedNamespaces()
 						if err != nil {
 							n.logger.Error("Could not list watched namespaces for deletion", err)
 						}
+
+						if n.appConfig.PostponeDeletion && len(watchedNamespaces) > 0 {
+							n.postponeActive(watchedNamespaces)
+						}
+
+						expiredNamespaces := n.filterExpiredNamespaces(watchedNamespaces)
 
 						n.logger.Info("Expired namespaces found", "count", len(expiredNamespaces))
 						err = n.processExpiredNamespaces(ctx, expiredNamespaces)
 						if err != nil {
 							n.logger.Error("Could not process expired namespaces", err)
 						}
+
 						time.Sleep(5 * time.Second)
 						isActive = false
 					}
@@ -206,6 +232,34 @@ func (n *NsInformer) DeletionTicker(ctx context.Context, lister v1.NamespaceList
 			continue
 		}
 	}()
+}
+
+func (n *NsInformer) postponeActive(watchedNamespaces []*corev1.Namespace) error {
+	// fmt.Println("EVENT TIMES OF NAMESPACE: ", watchedNamespaces[0].Name)
+	// for _, namespace := range watchedNamespaces {
+	// 	events, _ := n.eventsLister.Events(namespace.Name).List(labels.Everything())
+
+	// 	// TODO: Filter events by types (create and update) and by default k8s resources: pod, ingress, svc.
+	// 	for _, e := range events {
+	// 		fmt.Print(e.Name, " CreatedIS:", e.ObjectMeta.CreationTimestamp, " Reason:", e.Reason, " OwnerRef: ", e.OwnerReferences, "\n\n\n")
+
+	// 		ey, em, ed := e.EventTime.UTC().Date()
+	// 		ty, tm, td := time.Now().UTC().Date()
+	// 		if ey == ty && em == tm && ed == td {
+	// 			fmt.Println("Event", e.Name, "is happening today, updating retention date.")
+	// 			fmt.Println(e.CreationTimestamp)
+	// 			// TODO: Add retention time to current timestamp
+	// 		}
+	// 	}
+	// }
+	// TODO: It is look like that k8s events is not reliable source of information for our needs.
+	for _, ns := range watchedNamespaces {
+		nsReleases, _ := n.listNamespaceReleases(ns)
+		for _, release := range nsReleases {
+			fmt.Println(release.Name, " last deployed: ", release.Info.LastDeployed.UTC())
+		}
+	}
+	return nil
 }
 
 func (n *NsInformer) processExpiredNamespaces(ctx context.Context, namespaces []*corev1.Namespace) error {
@@ -242,8 +296,13 @@ func (n *NsInformer) deleteNamespaces(ctx context.Context, namespaces []*corev1.
 	for _, ns := range namespaces {
 
 		if n.appConfig.IsDeleteByRelease {
-			n.deleteNamespaceReleases(ctx, ns)
+			releases, err := n.listNamespaceReleases(ns)
+			if err != nil {
+				n.logger.Error("Could not list releases", "namespace", ns.Name)
+			}
+			n.deleteNamespaceReleases(releases, ns)
 		}
+
 		err := n.client.CoreV1().Namespaces().Delete(ctx, ns.Name, deleteOptions)
 		if err != nil {
 			// If the namespace is already deleted, return without error.
@@ -258,7 +317,8 @@ func (n *NsInformer) deleteNamespaces(ctx context.Context, namespaces []*corev1.
 	return nil
 }
 
-func (n *NsInformer) deleteNamespaceReleases(ctx context.Context, namespace *corev1.Namespace) error {
+func (n *NsInformer) listNamespaceReleases(namespace *corev1.Namespace) ([]*release.Release, error) {
+	releasesList := make([]*release.Release, 0)
 
 	settings := cli.New()
 	settings.SetNamespace(namespace.Name)
@@ -266,16 +326,26 @@ func (n *NsInformer) deleteNamespaceReleases(ctx context.Context, namespace *cor
 
 	if err := actionConfig.Init(settings.RESTClientGetter(), settings.Namespace(), "secret", n.logger.Debug); err != nil {
 		n.logger.Error("Could not initialize helm action config", err)
-		return err
+		return releasesList, err
 	}
 
 	listAction := action.NewList(actionConfig)
 
-	releases, err := listAction.Run()
+	releasesList, err := listAction.Run()
 	if err != nil {
 		n.logger.Error("Could not list releases", err)
-		return err
+		return releasesList, err
 	}
+
+	return releasesList, nil
+
+}
+
+func (n *NsInformer) deleteNamespaceReleases(releases []*release.Release, namespace *corev1.Namespace) error {
+	// TODO: is there some way to catch error?
+	settings := cli.New()
+	settings.SetNamespace(namespace.Name)
+	actionConfig := new(action.Configuration)
 
 	deleteAction := action.NewUninstall(actionConfig)
 	deleteAction.DisableHooks = false
@@ -295,18 +365,15 @@ func (n *NsInformer) deleteNamespaceReleases(ctx context.Context, namespace *cor
 	return nil
 }
 
-func (n *NsInformer) getExpiredNamespaces(lister v1.NamespaceLister) (expiredNamespaces []*corev1.Namespace, err error) {
+func (n *NsInformer) filterExpiredNamespaces(watchedNamespaces []*corev1.Namespace) (expiredNamespaces []*corev1.Namespace) {
 	timeNow := time.Now().UTC()
-	watchedNamespaces, err := n.listWatchedNamespaces(lister)
-	if err != nil {
-		return expiredNamespaces, err
-	}
 
 	for _, ns := range watchedNamespaces {
 		timeStampAnnotation := ns.Annotations[n.appConfig.AnnotationKey]
 		nsDeletionTimespamp, err := time.Parse(RFC3339local, timeStampAnnotation)
 		if err != nil {
-			return expiredNamespaces, err
+			n.logger.Error("Invalid timestamp parsed from watched namespace")
+			return expiredNamespaces
 		}
 
 		if nsDeletionTimespamp.Before(timeNow) {
@@ -314,13 +381,13 @@ func (n *NsInformer) getExpiredNamespaces(lister v1.NamespaceLister) (expiredNam
 		}
 	}
 
-	return expiredNamespaces, nil
+	return expiredNamespaces
 }
 
-func (n *NsInformer) listWatchedNamespaces(lister v1.NamespaceLister) (namespaces []*corev1.Namespace, err error) {
+func (n *NsInformer) listWatchedNamespaces() (namespaces []*corev1.Namespace, err error) {
 	watchedNamespaces := make([]*corev1.Namespace, 0)
 
-	namespaces, err = lister.List(labels.Everything())
+	namespaces, err = n.nsLister.List(labels.Everything())
 	if err != nil {
 		return watchedNamespaces, errors.New("could not list namespaces")
 	}
@@ -333,6 +400,19 @@ func (n *NsInformer) listWatchedNamespaces(lister v1.NamespaceLister) (namespace
 	}
 	return watchedNamespaces, err
 
+}
+
+func (n *NsInformer) listWatchedNamespacesNames() (namespaces []string, err error) {
+	watchedNamespaces, err := n.listWatchedNamespaces()
+	names := make([]string, 0)
+
+	if err != nil {
+		return names, err
+	}
+	for _, ns := range watchedNamespaces {
+		names = append(names, ns.Name)
+	}
+	return names, err
 }
 
 func (n *NsInformer) isAllowedWindow(t time.Time) bool {
