@@ -41,6 +41,8 @@ ReviewReaper is fully configurable via a yaml configuration file, which should b
 - /app
 - /etc/app
 
+You can find `config.yaml` example in repository root.
+
 Here are description of all config options.
 
 ### namespace_prefixes[]

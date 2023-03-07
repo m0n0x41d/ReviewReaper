@@ -1,15 +1,12 @@
 namespace_prefixes:
   - review
-  - feature
 
-# Retention defined in days. May be additionally tuned in hours
-# TODO: Andd hours in config for retention fine-tuning.
 retention:
   days: 1
   hours: 2
 
-# deletion_batch_size: 1
-# deletion_nap_seconds: 1
+deletion_batch_size: 1
+deletion_nap_seconds: 1
 
 annotation_key: delete_after
 
