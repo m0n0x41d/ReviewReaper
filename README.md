@@ -48,8 +48,9 @@ Here are description of all config options.
 ### namespace_prefixes[]
 
 A yaml list of namespace names prefixes, such as review, feature, ticket... whatever else.
+ReviewReaper with watch for namespaces which names are started with specified substrings.
 
-Default value: There is no default value. At least one prefix must be passed in this field to run the ReviewReaper.
+Default value: There is **no default** value. At least one prefix must be passed in this field to run the ReviewReaper.
 
 ### retention{}
 
