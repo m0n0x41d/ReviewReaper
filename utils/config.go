@@ -53,7 +53,6 @@ func LoadConfig() (config Config, err error) {
 	viper.SetDefault("deletion_windows.not_before", "00:00")
 	viper.SetDefault("deletion_windows.not_after", "06:00")
 	viper.SetDefault("deletion_windows.week_days", validweekdays)
-	viper.SetDefault("postpone_deletion", false)
 	viper.SetDefault("annotation_key", "delete_after")
 	viper.SetDefault("postpone_deletion_if_active", false)
 	viper.SetDefault("log_level", "INFO")
