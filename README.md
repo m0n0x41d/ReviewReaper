@@ -1,6 +1,6 @@
 # ReviewReaper
 
-![](https://imgur.com/a/wdIG1gt)
+![banner_image](img/banner.png)
 
 During the development process, for example when multiple development teams uses review environments in k8s, it can be quite difficult to automate the removal of such forgotten environment namespaces in some cases.
 
