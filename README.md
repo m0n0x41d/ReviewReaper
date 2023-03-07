@@ -20,10 +20,6 @@ ReviewReaper informer is designed to solve this problem.
     - [.not_after](#not_after)
     - [.week_days](#week_days)
   - [postpone_deletion_if_active](#postpone_deletion_if_active)
-  - []()
-  - []()
-  - []()
-  - []()
 - [Contributing](#contributing)
 - [License](#license)
 
