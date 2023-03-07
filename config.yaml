@@ -12,7 +12,9 @@ retention:
 # deletion_nap_seconds: 1
 
 annotation_key: delete_after
+
 delete_by_release: true
+
 postpone_deletion_if_active: true
 
 deletion_windows:

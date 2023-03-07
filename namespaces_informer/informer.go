@@ -3,7 +3,6 @@ package namespaces_informer
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -37,8 +36,7 @@ type NsInformer struct {
 	logger     logs.Logger
 	appConfig  utils.Config
 
-	nsLister     listers.NamespaceLister
-	eventsLister listers.EventLister
+	nsLister listers.NamespaceLister
 }
 
 func NewNsInformer(restConfig *rest.Config, client *kubernetes.Clientset, logger logs.Logger, appConfig utils.Config) *NsInformer {
@@ -61,20 +59,9 @@ func (n *NsInformer) Run(ctx context.Context) error {
 
 	n.nsLister = namespaceLister
 
-	eventInformer := informerFactory.Core().V1().Events().Informer()
-	eventsLister := informerFactory.Core().V1().Events().Lister()
-
-	n.eventsLister = eventsLister
-
 	namespaceInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    n.onAddNamespace(ctx),
 		UpdateFunc: n.onUpdateNamespace(ctx),
-		DeleteFunc: func(interface{}) { return },
-	})
-
-	eventInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    n.onAddEvent(ctx),
-		UpdateFunc: func(interface{}, interface{}) { return },
 		DeleteFunc: func(interface{}) { return },
 	})
 
@@ -94,8 +81,8 @@ func (n *NsInformer) onAddNamespace(ctx context.Context) func(interface{}) {
 
 	return func(obj interface{}) {
 		namespace := obj.(*corev1.Namespace)
-		if isWatched(namespace.Name, n.appConfig.NamespacePrefixes) {
-			n.ensureAnnotated(ctx, n.client, namespace)
+		if n.isWatched(namespace.Name, n.appConfig.NamespacePrefixes) {
+			n.ensureAnnotated(ctx, namespace)
 		}
 	}
 }
@@ -105,27 +92,13 @@ func (n *NsInformer) onUpdateNamespace(ctx context.Context) func(interface{}, in
 	return func(oldObj interface{}, newObj interface{}) {
 		newNamespace := newObj.(*corev1.Namespace)
 
-		if isWatched(newNamespace.Name, n.appConfig.NamespacePrefixes) {
-
-			// TODO: Probably we could just copy annotation
-			n.ensureAnnotated(ctx, n.client, newNamespace)
+		if n.isWatched(newNamespace.Name, n.appConfig.NamespacePrefixes) {
+			n.ensureAnnotated(ctx, newNamespace)
 		}
 	}
 }
 
-func (n *NsInformer) onAddEvent(ctx context.Context) func(interface{}) {
-	return func(obj interface{}) {
-		// watchedNamespacesNames, _ := n.listWatchedNamespacesNames(n.nsLister)
-		// event := obj.(*corev1.Event)
-
-		// if utils.IsContains(watchedNamespacesNames, event.ObjectMeta.Namespace) {
-		// 	fmt.Printf("GOT THIS EVENT FROM NAMESPACE %s", event.ObjectMeta.Namespace)
-		// 	fmt.Println(event.CreationTimestamp.UTC())
-		// }
-	}
-}
-
-func isWatched(nsName string, watchedNs []string) bool {
+func (n *NsInformer) isWatched(nsName string, watchedNs []string) bool {
 	isMatched := false
 	for _, ns := range watchedNs {
 		if strings.HasPrefix(nsName, ns) {
@@ -136,60 +109,67 @@ func isWatched(nsName string, watchedNs []string) bool {
 	return isMatched
 }
 
-// TODO: Might be a good idea to decompose is down on two funcs: isAnnotated and Annotate.
-// TODO: We need to be sure that annotation value (timestamp) not changed to some gibberish.
-func (n *NsInformer) ensureAnnotated(ctx context.Context, client *kubernetes.Clientset, ns *corev1.Namespace) error {
-	annotations := getNsAnnotations(ns)
+func (n *NsInformer) ensureAnnotated(ctx context.Context, ns *corev1.Namespace) error {
+	annotations := n.getNsAnnotations(ns)
 	_, ok := annotations[n.appConfig.AnnotationKey]
 	if !ok {
-
-		decommissionTimestamp := n.defDecomissionTimestamp(ns).UTC().Format(time.RFC3339)
-		newNs := ns.DeepCopy()
-		annotations := newNs.ObjectMeta.Annotations
-
-		if annotations == nil {
-			annotations = make(map[string]string)
-		}
-
-		annotations[n.appConfig.AnnotationKey] = decommissionTimestamp
-
-		newNs.ObjectMeta.Annotations = annotations
-
-		updateOptions := metav1.UpdateOptions{}
-		_, err := client.CoreV1().Namespaces().Update(ctx, newNs, updateOptions)
-
-		if err != nil {
-			return err
-		}
+		createdAt := n.getNsCreationTimestamp(ns)
+		decommissionTimestamp := n.shiftTimeStampByRetention(createdAt).UTC().Format(time.RFC3339)
+		n.annotateRetention(ctx, ns, decommissionTimestamp)
+		n.logger.Info("Namespace", ns.Name, "annotated for deletion after", "timestamp", decommissionTimestamp)
 	}
 
 	return nil
 }
 
-func getNsCreationTimestamp(ns *corev1.Namespace) time.Time {
+func (n *NsInformer) annotateRetention(ctx context.Context, ns *corev1.Namespace, annotationValue string) error {
+	if ns.ObjectMeta.Annotations[n.appConfig.AnnotationKey] == annotationValue {
+		return nil
+	}
+
+	newNs := ns.DeepCopy()
+	annotations := newNs.ObjectMeta.Annotations
+
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
+
+	annotations[n.appConfig.AnnotationKey] = annotationValue
+
+	newNs.ObjectMeta.Annotations = annotations
+
+	updateOptions := metav1.UpdateOptions{}
+	_, err := n.client.CoreV1().Namespaces().Update(ctx, newNs, updateOptions)
+
+	if err != nil {
+		n.logger.Error("Unable annotate", "namespace", ns.Name, "err", err)
+	}
+	return nil
+}
+
+func (n *NsInformer) getNsCreationTimestamp(ns *corev1.Namespace) time.Time {
 	return ns.ObjectMeta.CreationTimestamp.Time
 }
 
-func getNsAnnotations(ns *corev1.Namespace) map[string]string {
+func (n *NsInformer) getNsAnnotations(ns *corev1.Namespace) map[string]string {
 	return ns.ObjectMeta.Annotations
 }
 
-// TODO: Andd hours in config for retention fine-tuning.
-func (n *NsInformer) defDecomissionTimestamp(ns *corev1.Namespace) time.Time {
-	createdAt := getNsCreationTimestamp(ns)
+func (n *NsInformer) shiftTimeStampByRetention(timestamp time.Time) time.Time {
 
 	retentionDays := n.appConfig.RetentionDays
 	retentionHours := n.appConfig.RetentionHours
 
 	timeoutDays := time.Duration(retentionDays)
-	decommissionTimestamp := createdAt.Add(time.Hour * 24 * timeoutDays)
+	shiftedTs := timestamp.Add(time.Hour * 24 * timeoutDays)
 
 	if retentionHours > 0 {
 		timeoutHours := time.Duration(retentionHours)
-		decommissionTimestamp = decommissionTimestamp.Add(time.Hour * timeoutHours)
+		shiftedTs = shiftedTs.Add(time.Hour * timeoutHours)
 	}
 
-	return decommissionTimestamp
+	return shiftedTs
+
 }
 
 func (n *NsInformer) DeletionTicker(ctx context.Context) {
@@ -213,7 +193,7 @@ func (n *NsInformer) DeletionTicker(ctx context.Context) {
 						}
 
 						if n.appConfig.PostponeDeletion && len(watchedNamespaces) > 0 {
-							n.postponeActive(watchedNamespaces)
+							n.postponeDelOfActive(ctx, watchedNamespaces)
 						}
 
 						expiredNamespaces := n.filterExpiredNamespaces(watchedNamespaces)
@@ -234,29 +214,22 @@ func (n *NsInformer) DeletionTicker(ctx context.Context) {
 	}()
 }
 
-func (n *NsInformer) postponeActive(watchedNamespaces []*corev1.Namespace) error {
-	// fmt.Println("EVENT TIMES OF NAMESPACE: ", watchedNamespaces[0].Name)
-	// for _, namespace := range watchedNamespaces {
-	// 	events, _ := n.eventsLister.Events(namespace.Name).List(labels.Everything())
-
-	// 	// TODO: Filter events by types (create and update) and by default k8s resources: pod, ingress, svc.
-	// 	for _, e := range events {
-	// 		fmt.Print(e.Name, " CreatedIS:", e.ObjectMeta.CreationTimestamp, " Reason:", e.Reason, " OwnerRef: ", e.OwnerReferences, "\n\n\n")
-
-	// 		ey, em, ed := e.EventTime.UTC().Date()
-	// 		ty, tm, td := time.Now().UTC().Date()
-	// 		if ey == ty && em == tm && ed == td {
-	// 			fmt.Println("Event", e.Name, "is happening today, updating retention date.")
-	// 			fmt.Println(e.CreationTimestamp)
-	// 			// TODO: Add retention time to current timestamp
-	// 		}
-	// 	}
-	// }
-	// TODO: It is look like that k8s events is not reliable source of information for our needs.
+func (n *NsInformer) postponeDelOfActive(ctx context.Context, watchedNamespaces []*corev1.Namespace) error {
 	for _, ns := range watchedNamespaces {
+
 		nsReleases, _ := n.listNamespaceReleases(ns)
-		for _, release := range nsReleases {
-			fmt.Println(release.Name, " last deployed: ", release.Info.LastDeployed.UTC())
+		if len(nsReleases) <= 0 {
+			continue
+		}
+
+		nsDeletionTs, _ := n.getNsDeletionTimespamp(ns)
+		nsCreationTs := n.getNsCreationTimestamp(ns)
+		latestRelease := n.latestDeployedRelease(nsReleases)
+
+		latestDeployTs := latestRelease.Info.LastDeployed.UTC().Time
+		if latestDeployTs.After(nsCreationTs) && latestDeployTs.Before(nsDeletionTs) {
+			newRetention := n.shiftTimeStampByRetention(latestDeployTs).UTC().Format(time.RFC3339)
+			n.annotateRetention(ctx, ns, newRetention)
 		}
 	}
 	return nil
@@ -341,6 +314,19 @@ func (n *NsInformer) listNamespaceReleases(namespace *corev1.Namespace) ([]*rele
 
 }
 
+func (n *NsInformer) latestDeployedRelease(releases []*release.Release) *release.Release {
+
+	latest := releases[0]
+	for _, release := range releases {
+		if release.Info.LastDeployed.After(latest.Info.LastDeployed) {
+			latest = release
+		}
+	}
+
+	return latest
+
+}
+
 func (n *NsInformer) deleteNamespaceReleases(releases []*release.Release, namespace *corev1.Namespace) error {
 	// TODO: is there some way to catch error?
 	settings := cli.New()
@@ -369,8 +355,7 @@ func (n *NsInformer) filterExpiredNamespaces(watchedNamespaces []*corev1.Namespa
 	timeNow := time.Now().UTC()
 
 	for _, ns := range watchedNamespaces {
-		timeStampAnnotation := ns.Annotations[n.appConfig.AnnotationKey]
-		nsDeletionTimespamp, err := time.Parse(RFC3339local, timeStampAnnotation)
+		nsDeletionTimespamp, err := n.getNsDeletionTimespamp(ns)
 		if err != nil {
 			n.logger.Error("Invalid timestamp parsed from watched namespace")
 			return expiredNamespaces
@@ -384,6 +369,13 @@ func (n *NsInformer) filterExpiredNamespaces(watchedNamespaces []*corev1.Namespa
 	return expiredNamespaces
 }
 
+func (n *NsInformer) getNsDeletionTimespamp(namespace *corev1.Namespace) (time.Time, error) {
+	timeStampAnnotation := namespace.Annotations[n.appConfig.AnnotationKey]
+	nsDeletionTimespamp, err := time.Parse(RFC3339local, timeStampAnnotation)
+
+	return nsDeletionTimespamp, err
+}
+
 func (n *NsInformer) listWatchedNamespaces() (namespaces []*corev1.Namespace, err error) {
 	watchedNamespaces := make([]*corev1.Namespace, 0)
 
@@ -393,7 +385,7 @@ func (n *NsInformer) listWatchedNamespaces() (namespaces []*corev1.Namespace, er
 	}
 
 	for _, ns := range namespaces {
-		if isWatched(ns.Name, n.appConfig.NamespacePrefixes) {
+		if n.isWatched(ns.Name, n.appConfig.NamespacePrefixes) {
 			watchedNamespaces = append(watchedNamespaces, ns)
 		}
 
