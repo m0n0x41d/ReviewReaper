@@ -43,7 +43,7 @@ ReviewReaper is fully configurable via a yaml configuration file, which should b
 
 You can find `config.yaml` example in repository root.
 
-Here are description of all config options.
+Here are description of all config options. Default values used if parameter is not defined in config.yaml when applicable.
 
 ### namespace_prefixes[]
 
