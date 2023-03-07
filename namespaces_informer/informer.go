@@ -78,7 +78,6 @@ func (n *NsInformer) Run(ctx context.Context) error {
 }
 
 func (n *NsInformer) onAddNamespace(ctx context.Context) func(interface{}) {
-
 	return func(obj interface{}) {
 		namespace := obj.(*corev1.Namespace)
 		if n.isWatched(namespace.Name, n.appConfig.NamespacePrefixes) {
@@ -88,7 +87,6 @@ func (n *NsInformer) onAddNamespace(ctx context.Context) func(interface{}) {
 }
 
 func (n *NsInformer) onUpdateNamespace(ctx context.Context) func(interface{}, interface{}) {
-
 	return func(oldObj interface{}, newObj interface{}) {
 		newNamespace := newObj.(*corev1.Namespace)
 
@@ -147,31 +145,6 @@ func (n *NsInformer) annotateRetention(ctx context.Context, ns *corev1.Namespace
 	return nil
 }
 
-func (n *NsInformer) getNsCreationTimestamp(ns *corev1.Namespace) time.Time {
-	return ns.ObjectMeta.CreationTimestamp.Time
-}
-
-func (n *NsInformer) getNsAnnotations(ns *corev1.Namespace) map[string]string {
-	return ns.ObjectMeta.Annotations
-}
-
-func (n *NsInformer) shiftTimeStampByRetention(timestamp time.Time) time.Time {
-
-	retentionDays := n.appConfig.RetentionDays
-	retentionHours := n.appConfig.RetentionHours
-
-	timeoutDays := time.Duration(retentionDays)
-	shiftedTs := timestamp.Add(time.Hour * 24 * timeoutDays)
-
-	if retentionHours > 0 {
-		timeoutHours := time.Duration(retentionHours)
-		shiftedTs = shiftedTs.Add(time.Hour * timeoutHours)
-	}
-
-	return shiftedTs
-
-}
-
 func (n *NsInformer) DeletionTicker(ctx context.Context) {
 	ticker := time.NewTicker(5 * time.Second)
 	done := make(chan bool)
@@ -214,6 +187,51 @@ func (n *NsInformer) DeletionTicker(ctx context.Context) {
 	}()
 }
 
+func (n *NsInformer) isAllowedWindow(t time.Time) bool {
+
+	isAllowed := false
+
+	nbCfg := n.appConfig.DeletionWindow.NotBefore
+	naCfg := n.appConfig.DeletionWindow.NotAfter
+
+	todayWeekday := t.UTC().Weekday().String()[0:3]
+	weekdayOk := utils.IsContains(n.appConfig.DeletionWindow.WeekDays, todayWeekday)
+
+	if weekdayOk == false {
+		return isAllowed
+	}
+
+	notBeforeCfg, _ := time.Parse(HH_MM, nbCfg)
+	notAfterCfg, _ := time.Parse(HH_MM, naCfg)
+
+	notBefore := time.Date(t.Year(), t.Month(), t.Day(), notBeforeCfg.Hour(), notBeforeCfg.Minute(), 0, 0, time.UTC)
+	notAfter := time.Date(t.Year(), t.Month(), t.Day(), notAfterCfg.Hour(), notAfterCfg.Minute(), 0, 0, time.UTC)
+
+	if t.After(notBefore) && t.Before(notAfter) {
+		isAllowed = true
+	}
+
+	return isAllowed
+}
+
+func (n *NsInformer) listWatchedNamespaces() (namespaces []*corev1.Namespace, err error) {
+	watchedNamespaces := make([]*corev1.Namespace, 0)
+
+	namespaces, err = n.nsLister.List(labels.Everything())
+	if err != nil {
+		return watchedNamespaces, errors.New("could not list namespaces")
+	}
+
+	for _, ns := range namespaces {
+		if n.isWatched(ns.Name, n.appConfig.NamespacePrefixes) {
+			watchedNamespaces = append(watchedNamespaces, ns)
+		}
+
+	}
+	return watchedNamespaces, err
+
+}
+
 func (n *NsInformer) postponeDelOfActive(ctx context.Context, watchedNamespaces []*corev1.Namespace) error {
 	for _, ns := range watchedNamespaces {
 
@@ -233,6 +251,67 @@ func (n *NsInformer) postponeDelOfActive(ctx context.Context, watchedNamespaces 
 		}
 	}
 	return nil
+}
+
+func (n *NsInformer) latestDeployedRelease(releases []*release.Release) *release.Release {
+	latest := releases[0]
+	for _, release := range releases {
+		if release.Info.LastDeployed.After(latest.Info.LastDeployed) {
+			latest = release
+		}
+	}
+
+	return latest
+}
+
+func (n *NsInformer) filterExpiredNamespaces(watchedNamespaces []*corev1.Namespace) (expiredNamespaces []*corev1.Namespace) {
+	timeNow := time.Now().UTC()
+
+	for _, ns := range watchedNamespaces {
+		nsDeletionTimespamp, err := n.getNsDeletionTimespamp(ns)
+		if err != nil {
+			n.logger.Error("Invalid timestamp parsed from watched namespace")
+			return expiredNamespaces
+		}
+
+		if nsDeletionTimespamp.Before(timeNow) {
+			expiredNamespaces = append(expiredNamespaces, ns)
+		}
+	}
+
+	return expiredNamespaces
+}
+
+func (n *NsInformer) getNsDeletionTimespamp(namespace *corev1.Namespace) (time.Time, error) {
+	timeStampAnnotation := namespace.Annotations[n.appConfig.AnnotationKey]
+	nsDeletionTimespamp, err := time.Parse(RFC3339local, timeStampAnnotation)
+
+	return nsDeletionTimespamp, err
+}
+
+func (n *NsInformer) getNsCreationTimestamp(ns *corev1.Namespace) time.Time {
+	return ns.ObjectMeta.CreationTimestamp.Time
+}
+
+func (n *NsInformer) getNsAnnotations(ns *corev1.Namespace) map[string]string {
+	return ns.ObjectMeta.Annotations
+}
+
+func (n *NsInformer) shiftTimeStampByRetention(timestamp time.Time) time.Time {
+
+	retentionDays := n.appConfig.RetentionDays
+	retentionHours := n.appConfig.RetentionHours
+
+	timeoutDays := time.Duration(retentionDays)
+	shiftedTs := timestamp.Add(time.Hour * 24 * timeoutDays)
+
+	if retentionHours > 0 {
+		timeoutHours := time.Duration(retentionHours)
+		shiftedTs = shiftedTs.Add(time.Hour * timeoutHours)
+	}
+
+	return shiftedTs
+
 }
 
 func (n *NsInformer) processExpiredNamespaces(ctx context.Context, namespaces []*corev1.Namespace) error {
@@ -314,19 +393,6 @@ func (n *NsInformer) listNamespaceReleases(namespace *corev1.Namespace) ([]*rele
 
 }
 
-func (n *NsInformer) latestDeployedRelease(releases []*release.Release) *release.Release {
-
-	latest := releases[0]
-	for _, release := range releases {
-		if release.Info.LastDeployed.After(latest.Info.LastDeployed) {
-			latest = release
-		}
-	}
-
-	return latest
-
-}
-
 func (n *NsInformer) deleteNamespaceReleases(releases []*release.Release, namespace *corev1.Namespace) error {
 	// TODO: is there some way to catch error?
 	settings := cli.New()
@@ -349,87 +415,4 @@ func (n *NsInformer) deleteNamespaceReleases(releases []*release.Release, namesp
 	wg.Wait()
 
 	return nil
-}
-
-func (n *NsInformer) filterExpiredNamespaces(watchedNamespaces []*corev1.Namespace) (expiredNamespaces []*corev1.Namespace) {
-	timeNow := time.Now().UTC()
-
-	for _, ns := range watchedNamespaces {
-		nsDeletionTimespamp, err := n.getNsDeletionTimespamp(ns)
-		if err != nil {
-			n.logger.Error("Invalid timestamp parsed from watched namespace")
-			return expiredNamespaces
-		}
-
-		if nsDeletionTimespamp.Before(timeNow) {
-			expiredNamespaces = append(expiredNamespaces, ns)
-		}
-	}
-
-	return expiredNamespaces
-}
-
-func (n *NsInformer) getNsDeletionTimespamp(namespace *corev1.Namespace) (time.Time, error) {
-	timeStampAnnotation := namespace.Annotations[n.appConfig.AnnotationKey]
-	nsDeletionTimespamp, err := time.Parse(RFC3339local, timeStampAnnotation)
-
-	return nsDeletionTimespamp, err
-}
-
-func (n *NsInformer) listWatchedNamespaces() (namespaces []*corev1.Namespace, err error) {
-	watchedNamespaces := make([]*corev1.Namespace, 0)
-
-	namespaces, err = n.nsLister.List(labels.Everything())
-	if err != nil {
-		return watchedNamespaces, errors.New("could not list namespaces")
-	}
-
-	for _, ns := range namespaces {
-		if n.isWatched(ns.Name, n.appConfig.NamespacePrefixes) {
-			watchedNamespaces = append(watchedNamespaces, ns)
-		}
-
-	}
-	return watchedNamespaces, err
-
-}
-
-func (n *NsInformer) listWatchedNamespacesNames() (namespaces []string, err error) {
-	watchedNamespaces, err := n.listWatchedNamespaces()
-	names := make([]string, 0)
-
-	if err != nil {
-		return names, err
-	}
-	for _, ns := range watchedNamespaces {
-		names = append(names, ns.Name)
-	}
-	return names, err
-}
-
-func (n *NsInformer) isAllowedWindow(t time.Time) bool {
-
-	isAllowed := false
-
-	nbCfg := n.appConfig.DeletionWindow.NotBefore
-	naCfg := n.appConfig.DeletionWindow.NotAfter
-
-	todayWeekday := t.UTC().Weekday().String()[0:3]
-	weekdayOk := utils.IsContains(n.appConfig.DeletionWindow.WeekDays, todayWeekday)
-
-	if weekdayOk == false {
-		return isAllowed
-	}
-
-	notBeforeCfg, _ := time.Parse(HH_MM, nbCfg)
-	notAfterCfg, _ := time.Parse(HH_MM, naCfg)
-
-	notBefore := time.Date(t.Year(), t.Month(), t.Day(), notBeforeCfg.Hour(), notBeforeCfg.Minute(), 0, 0, time.UTC)
-	notAfter := time.Date(t.Year(), t.Month(), t.Day(), notAfterCfg.Hour(), notAfterCfg.Minute(), 0, 0, time.UTC)
-
-	if t.After(notBefore) && t.Before(notAfter) {
-		isAllowed = true
-	}
-
-	return isAllowed
 }
