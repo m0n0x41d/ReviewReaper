@@ -31,6 +31,8 @@ ReviewReaper informer is designed to solve this problem.
 
 Build from source, configure by simple config file and deploy in your cluster. See helm chart example.
 
+You might run ReviewReaper locally with kubeconfig, just set path to kubeconfig in `KUBECONFIG` env variable.
+
 All timestamps and time related configuration (such as [deletion window](#deletion_windows{})) is treated and assumed as UTC.
 
 ## Configuration
