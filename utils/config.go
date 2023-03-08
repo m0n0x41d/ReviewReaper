@@ -14,15 +14,15 @@ var (
 
 // TODO: Check if rest of the fields also can be validated. It's probably worth implementing a custom validation function and removing the validator.
 type Config struct {
-	NamespacePrefixes  []string `validate:"required"`
-	RetentionDays      int      `validate:"gte=0"`
-	RetentionHours     int      `validate:"gte=0"`
-	DeletionBatchSize  int      `validate:"gte=0"`
-	DeletionNapSeconds int      `validate:"gte=0"`
-	IsDeleteByRelease  bool
-	PostponeDeletion   bool
-	AnnotationKey      string
-	DeletionWindow     struct {
+	NamespacePrefixes   []string `validate:"required"`
+	RetentionDays       int      `validate:"gte=0"`
+	RetentionHours      int      `validate:"gte=0"`
+	DeletionBatchSize   int      `validate:"gte=0"`
+	DeletionNapSeconds  int      `validate:"gte=0"`
+	IsUninstallReleases bool
+	PostponeDeletion    bool
+	AnnotationKey       string
+	DeletionWindow      struct {
 		NotBefore string
 		NotAfter  string
 		WeekDays  []string
@@ -49,7 +49,7 @@ func LoadConfig() (config Config, err error) {
 	viper.SetDefault("retention.hours", 0)
 	viper.SetDefault("deletion_batch_size", 0)
 	viper.SetDefault("deletion_nap_seconds", 0)
-	viper.SetDefault("delete_by_release", false)
+	viper.SetDefault("uninstall_releases", false)
 	viper.SetDefault("deletion_windows.not_before", "00:00")
 	viper.SetDefault("deletion_windows.not_after", "06:00")
 	viper.SetDefault("deletion_windows.week_days", validweekdays)
@@ -64,7 +64,7 @@ func LoadConfig() (config Config, err error) {
 	config.DeletionBatchSize = viper.GetInt("deletion_batch_size")
 	config.DeletionNapSeconds = viper.GetInt("deletion_nap_seconds")
 
-	config.IsDeleteByRelease = viper.GetBool("delete_by_release")
+	config.IsUninstallReleases = viper.GetBool("uninstall_releases")
 	config.AnnotationKey = viper.GetString("annotation_key")
 
 	config.DeletionWindow.NotBefore = viper.GetString("deletion_windows.not_before")

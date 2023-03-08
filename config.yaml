@@ -10,7 +10,7 @@ deletion_nap_seconds: 1
 
 annotation_key: delete_after
 
-delete_by_release: true
+uninstall_releases: true
 
 postpone_deletion_if_active: true
 

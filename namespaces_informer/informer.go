@@ -7,8 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/NaNameUz3r/review_autostop_service/logs"
-	"github.com/NaNameUz3r/review_autostop_service/utils"
+	"NaNameUz3r/ReviewReaper/logs"
+	"NaNameUz3r/ReviewReaper/utils"
+
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/cli"
 
@@ -96,6 +97,7 @@ func (n *NsInformer) onUpdateNamespace(ctx context.Context) func(interface{}, in
 	}
 }
 
+// TODO: Made it parsed by regexp
 func (n *NsInformer) isWatched(nsName string, watchedNs []string) bool {
 	isMatched := false
 	for _, ns := range watchedNs {
@@ -164,7 +166,6 @@ func (n *NsInformer) DeletionTicker(ctx context.Context) {
 						if err != nil {
 							n.logger.Error("Could not list watched namespaces for deletion", err)
 						}
-
 						if n.appConfig.PostponeDeletion && len(watchedNamespaces) > 0 {
 							n.postponeDelOfActive(ctx, watchedNamespaces)
 						}
@@ -232,6 +233,7 @@ func (n *NsInformer) listWatchedNamespaces() (namespaces []*corev1.Namespace, er
 
 }
 
+// TODO: Check for not ok releases.
 func (n *NsInformer) postponeDelOfActive(ctx context.Context, watchedNamespaces []*corev1.Namespace) error {
 	for _, ns := range watchedNamespaces {
 
@@ -256,6 +258,7 @@ func (n *NsInformer) postponeDelOfActive(ctx context.Context, watchedNamespaces 
 func (n *NsInformer) latestDeployedRelease(releases []*release.Release) *release.Release {
 	latest := releases[0]
 	for _, release := range releases {
+
 		if release.Info.LastDeployed.After(latest.Info.LastDeployed) {
 			latest = release
 		}
@@ -347,7 +350,7 @@ func (n *NsInformer) deleteNamespaces(ctx context.Context, namespaces []*corev1.
 	deleteOptions := metav1.DeleteOptions{}
 	for _, ns := range namespaces {
 
-		if n.appConfig.IsDeleteByRelease {
+		if n.appConfig.IsUninstallReleases {
 			releases, err := n.listNamespaceReleases(ns)
 			if err != nil {
 				n.logger.Error("Could not list releases", "namespace", ns.Name)

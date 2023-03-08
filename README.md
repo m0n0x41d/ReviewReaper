@@ -16,7 +16,7 @@ ReviewReaper informer is designed to solve this problem.
     - [.hours](#hours)
   - [deletion_batch_size](#deletion_batch_size)
   - [deletion_nap_seconds](#deletion_nap_seconds)
-  - [delete_by_release](#delete_by_release)
+  - [uninstall_releases](#uninstall_releases)
   - [deletion_windows](#deletion_windows)
     - [.not_before](#not_before)
     - [.not_after](#not_after)
@@ -90,7 +90,7 @@ So, if ReviewReaper, or user viw kubectl will delete `N` namespaces with `X` in 
 
 Use ReviewReaper deletion_* parameters to avoid such cases :)
 
-### delete_by_release
+### uninstall_releases
 
 A boolean parameter that enables the removal of helm releases via helm-sdk in expired namespaces before deleting the namespace itself.
 
