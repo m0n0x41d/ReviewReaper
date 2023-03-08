@@ -1,5 +1,4 @@
-namespace_prefixes:
-  - review
+namespaces_name_regexp: feature
 
 retention:
   days: 1

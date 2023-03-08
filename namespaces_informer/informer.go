@@ -3,7 +3,6 @@ package namespaces_informer
 import (
 	"context"
 	"errors"
-	"strings"
 	"sync"
 	"time"
 
@@ -81,7 +80,7 @@ func (n *NsInformer) Run(ctx context.Context) error {
 func (n *NsInformer) onAddNamespace(ctx context.Context) func(interface{}) {
 	return func(obj interface{}) {
 		namespace := obj.(*corev1.Namespace)
-		if n.isWatched(namespace.Name, n.appConfig.NamespacePrefixes) {
+		if n.isWatched(namespace.Name) {
 			n.ensureAnnotated(ctx, namespace)
 		}
 	}
@@ -91,22 +90,15 @@ func (n *NsInformer) onUpdateNamespace(ctx context.Context) func(interface{}, in
 	return func(oldObj interface{}, newObj interface{}) {
 		newNamespace := newObj.(*corev1.Namespace)
 
-		if n.isWatched(newNamespace.Name, n.appConfig.NamespacePrefixes) {
+		if n.isWatched(newNamespace.Name) {
 			n.ensureAnnotated(ctx, newNamespace)
 		}
 	}
 }
 
 // TODO: Made it parsed by regexp
-func (n *NsInformer) isWatched(nsName string, watchedNs []string) bool {
-	isMatched := false
-	for _, ns := range watchedNs {
-		if strings.HasPrefix(nsName, ns) {
-			isMatched = true
-			break
-		}
-	}
-	return isMatched
+func (n *NsInformer) isWatched(nsName string) bool {
+	return n.appConfig.NsNameCompiledRegexp.MatchString(nsName)
 }
 
 func (n *NsInformer) ensureAnnotated(ctx context.Context, ns *corev1.Namespace) error {
@@ -224,7 +216,7 @@ func (n *NsInformer) listWatchedNamespaces() (namespaces []*corev1.Namespace, er
 	}
 
 	for _, ns := range namespaces {
-		if n.isWatched(ns.Name, n.appConfig.NamespacePrefixes) {
+		if n.isWatched(ns.Name) {
 			watchedNamespaces = append(watchedNamespaces, ns)
 		}
 

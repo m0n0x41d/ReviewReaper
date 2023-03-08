@@ -7,9 +7,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/NaNameUz3r/review_autostop_service/logs"
-	"github.com/NaNameUz3r/review_autostop_service/namespaces_informer"
-	"github.com/NaNameUz3r/review_autostop_service/utils"
+	"NaNameUz3r/ReviewReaper/logs"
+	"NaNameUz3r/ReviewReaper/namespaces_informer"
+	"NaNameUz3r/ReviewReaper/utils"
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -28,7 +28,7 @@ func main() {
 	}
 
 	logger := logs.NewLogger(appConfig)
-	logger.Info(fmt.Sprintf("Will watch for namespaces with prefixes: %s", appConfig.NamespacePrefixes))
+	logger.Info(fmt.Sprintf("Will watch for namespaces names matched RegExp: %s", appConfig.NsNameRegexp))
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()

@@ -10,7 +10,7 @@ ReviewReaper informer is designed to solve this problem.
 
 - [Installation & Usage](#installation)
 - [Configuration](#configuration)
-  - [namespace_prefixes](#namespace_prefixes)
+  - [namespace_name_regexp](#namespace_name_regexp)
   - [retention](#retention)
     - [.days](#days)
     - [.hours](#hours)
@@ -45,12 +45,14 @@ You can find `config.yaml` example in repository root.
 
 Here are description of all config options. Default values used if parameter is not defined in config.yaml when applicable.
 
-### namespace_prefixes[]
+### namespaces_name_regexp
 
-A yaml list of namespace names prefixes, such as review, feature, ticket... whatever else.
-ReviewReaper with watch for namespaces which names are started with specified substrings.
+A string value that is treated as a regular expression to match the namespaces names that the Review Reaper will track.
 
-Default value: There is **no default** value. At least one prefix must be passed in this field to run the ReviewReaper.
+Default value: This is the only mandatory parameter, thus it has no default value.
+
+The easiest and most convenient way is to pass a simple regexp with list of substrings that you use in naming your review environments, for example:
+RevewReaper configured with `namespaces_names_regexp: review|feature|trololo` will watch for namespaces that have any of the specified substrings in this regexp.
 
 ### retention{}
 

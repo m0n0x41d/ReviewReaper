@@ -1,11 +1,11 @@
 package utils
 
 import (
-	"fmt"
+	"errors"
+	"regexp"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/spf13/viper"
-	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 var (
@@ -14,15 +14,16 @@ var (
 
 // TODO: Check if rest of the fields also can be validated. It's probably worth implementing a custom validation function and removing the validator.
 type Config struct {
-	NamespacePrefixes   []string `validate:"required"`
-	RetentionDays       int      `validate:"gte=0"`
-	RetentionHours      int      `validate:"gte=0"`
-	DeletionBatchSize   int      `validate:"gte=0"`
-	DeletionNapSeconds  int      `validate:"gte=0"`
-	IsUninstallReleases bool
-	PostponeDeletion    bool
-	AnnotationKey       string
-	DeletionWindow      struct {
+	NsNameRegexp         string `validate:"required"`
+	NsNameCompiledRegexp *regexp.Regexp
+	RetentionDays        int `validate:"gte=0"`
+	RetentionHours       int `validate:"gte=0"`
+	DeletionBatchSize    int `validate:"gte=0"`
+	DeletionNapSeconds   int `validate:"gte=0"`
+	IsUninstallReleases  bool
+	PostponeDeletion     bool
+	AnnotationKey        string
+	DeletionWindow       struct {
 		NotBefore string
 		NotAfter  string
 		WeekDays  []string
@@ -57,7 +58,7 @@ func LoadConfig() (config Config, err error) {
 	viper.SetDefault("postpone_deletion_if_active", false)
 	viper.SetDefault("log_level", "INFO")
 
-	config.NamespacePrefixes = viper.GetStringSlice("namespace_prefixes")
+	config.NsNameRegexp = viper.GetString("namespaces_name_regexp")
 	config.RetentionDays = viper.GetInt("retention.days")
 	config.RetentionHours = viper.GetInt("retention.hours")
 
@@ -80,23 +81,28 @@ func LoadConfig() (config Config, err error) {
 		return Config{}, err
 	}
 
+	config.NsNameCompiledRegexp, err = regexp.Compile(config.NsNameRegexp)
+	if err != nil {
+		return Config{}, errors.New("Unable to compile regexp")
+	}
+
 	// validateConfig(config)
 	return config, nil
 }
 
-func validateConfig(c Config) (err error) {
-	err = validatePrefixes(c.NamespacePrefixes)
+// func validateConfig(c Config) (err error) {
+// 	err = validatePrefixes(c.NsNameRegexp)
 
-	return nil
-}
+// 	return nil
+// }
 
-func validatePrefixes(s []string) error {
+// func validatePrefixes(s []string) error {
 
-	for _, prefix := range s {
-		errs := validation.IsDNS1123Label(s[0])
-		if len(errs) > 0 {
-			return fmt.Errorf("namespace prefix '%s' not a lowercase RFC 1123 label", prefix)
-		}
-	}
-	return nil
-}
+// 	for _, prefix := range s {
+// 		errs := validation.IsDNS1123Label(s[0])
+// 		if len(errs) > 0 {
+// 			return fmt.Errorf("namespace prefix '%s' not a lowercase RFC 1123 label", prefix)
+// 		}
+// 	}
+// 	return nil
+// }

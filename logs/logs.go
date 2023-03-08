@@ -1,7 +1,8 @@
 package logs
 
 import (
-	"github.com/NaNameUz3r/review_autostop_service/utils"
+	"NaNameUz3r/ReviewReaper/utils"
+
 	"github.com/hashicorp/go-hclog"
 )
 
