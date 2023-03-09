@@ -3,8 +3,6 @@ replicaCount: 1
 image:
   imageName: reviewReaper:1.0
   pullPolicy: Always
-  # Overrides the image tag whose default is the chart appVersion.
-
 
 imagePullSecrets:
   - name: registrysecret
@@ -28,11 +26,6 @@ securityContext: {}
   # readOnlyRootFilesystem: true
   # runAsNonRoot: true
   # runAsUser: 1000
-
-service:
-  type: ClusterIP
-  port: 80
-
 
 resources:
   limits:
