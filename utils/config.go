@@ -13,6 +13,7 @@ var (
 )
 
 // TODO: Check if rest of the fields also can be validated. It's probably worth implementing a custom validation function and removing the validator.
+// TODO: Add ignored_namespaces parameter to preserve some namespaces, like ReviewReaper on its own, if it deployed by helm release and namespace named reviewreaper, fxmpl xDDD
 type Config struct {
 	NsNameRegexp         string `validate:"required"`
 	NsNameCompiledRegexp *regexp.Regexp

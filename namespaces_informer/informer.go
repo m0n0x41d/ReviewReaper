@@ -97,7 +97,6 @@ func (n *NsInformer) onUpdateNamespace(ctx context.Context) func(interface{}, in
 	}
 }
 
-// TODO: Made it parsed by regexp
 func (n *NsInformer) isWatched(nsName string) bool {
 	return n.appConfig.NsNameCompiledRegexp.MatchString(nsName)
 }
@@ -216,7 +215,6 @@ func (n *NsInformer) listWatchedNamespaces() (namespaces []*corev1.Namespace, er
 
 }
 
-// TODO: Check for not ok releases.
 func (n *NsInformer) postponeDelOfActive(ctx context.Context, watchedNamespaces []*corev1.Namespace) error {
 	for _, ns := range watchedNamespaces {
 
