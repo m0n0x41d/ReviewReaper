@@ -27,7 +27,7 @@ ReviewReaper informer is designed to solve this problem.
 
 ## Installation
 
-Build from source, configure by simple config file and deploy in your cluster. See helm chart example.
+Build from source, configure by simple config file and deploy in your cluster. See еру Dockerfile and helm-chart as axamples.
 
 You might run ReviewReaper locally with kubeconfig, just set path to kubeconfig in `KUBECONFIG` env variable.
 
