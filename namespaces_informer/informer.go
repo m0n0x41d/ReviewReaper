@@ -28,6 +28,7 @@ import (
 const (
 	HH_MM        = "15:04"
 	RFC3339local = "2006-01-02T15:04:05Z"
+	TICK_SECONDS = 1
 )
 
 type NsInformer struct {
@@ -72,7 +73,7 @@ func (n *NsInformer) Run(ctx context.Context) error {
 		return errors.New("timed out waiting for caches to sync")
 	}
 
-	n.DeletionTicker(ctx)
+	go n.DeletionTicker(ctx)
 
 	return nil
 }
@@ -140,44 +141,34 @@ func (n *NsInformer) annotateRetention(ctx context.Context, ns *corev1.Namespace
 }
 
 func (n *NsInformer) DeletionTicker(ctx context.Context) {
-	ticker := time.NewTicker(5 * time.Second)
-	done := make(chan bool)
-
-	go func() {
-		isActive := false
-		for {
-			if !isActive {
-				select {
-				case <-done:
-					return
-				case t := <-ticker.C:
-					if n.isAllowedWindow(t) && !isActive {
-						isActive = true
-
-						watchedNamespaces, err := n.listWatchedNamespaces()
-						if err != nil {
-							n.logger.Error("Could not list watched namespaces for deletion", err)
-						}
-						if n.appConfig.PostponeDeletion && len(watchedNamespaces) > 0 {
-							n.postponeDelOfActive(ctx, watchedNamespaces)
-						}
-
-						expiredNamespaces := n.filterExpiredNamespaces(watchedNamespaces)
-
-						n.logger.Info("Expired namespaces found", "count", len(expiredNamespaces))
-						err = n.processExpiredNamespaces(ctx, expiredNamespaces)
-						if err != nil {
-							n.logger.Error("Could not process expired namespaces", err)
-						}
-
-						time.Sleep(5 * time.Second)
-						isActive = false
-					}
-				}
+	ticker := time.NewTicker(TICK_SECONDS * time.Second)
+	mutex := new(sync.Mutex)
+	for range ticker.C {
+		tickTime := <-ticker.C
+		if n.isAllowedWindow(tickTime) && mutex.TryLock() {
+			n.logger.Info("Engaging in maintenance procedures", "Time", tickTime.UTC().Format(time.RFC822))
+			watchedNamespaces, err := n.listWatchedNamespaces()
+			if err != nil {
+				n.logger.Error("Could not list watched namespaces for deletion", err)
 			}
-			continue
+			if n.appConfig.PostponeDeletion && len(watchedNamespaces) > 0 {
+				n.postponeDelOfActive(ctx, watchedNamespaces)
+			}
+
+			expiredNamespaces := n.filterExpiredNamespaces(watchedNamespaces)
+
+			n.logger.Info("Found expired namespaces", "count", len(expiredNamespaces))
+			err = n.processExpiredNamespaces(ctx, expiredNamespaces)
+			if err != nil {
+				n.logger.Error("Could not process expired namespaces", err)
+			}
+
+			time.Sleep(10 * time.Second)
+			mutex.Unlock()
 		}
-	}()
+	}
+	<-ctx.Done()
+	n.logger.Info("Finishig deletion ticker...")
 }
 
 func (n *NsInformer) isAllowedWindow(t time.Time) bool {
