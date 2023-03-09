@@ -3,7 +3,6 @@ module NaNameUz3r/ReviewReaper
 go 1.20
 
 require (
-	github.com/NaNameUz3r/review_autostop_service v0.0.0-20230301194057-f776612ead98
 	github.com/go-playground/validator/v10 v10.11.2
 	github.com/hashicorp/go-hclog v1.4.0
 	github.com/spf13/viper v1.15.0
