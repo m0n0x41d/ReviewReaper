@@ -1,3 +1,4 @@
+{{- /*
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -16,16 +17,17 @@ rules:
   - '*'
   verbs:
   - '*'
+*/}}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: {{ include "reviewReaper.serviceAccountName" . }}-rbac
+  name: {{ .Chart.Name }}-rbac
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: {{ .Values.serviceAccount.ClusterRoleName }}
+  name: {{ .Values.serviceAccount.clusterRoleName }}
 subjects:
   - kind: ServiceAccount
-    name: {{ include "reviewReaper.serviceAccountName" . }}
+    name: {{ .Chart.Name }}-sa
     namespace: {{ .Release.Namespace }}
