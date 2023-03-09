@@ -28,7 +28,7 @@ import (
 const (
 	HH_MM        = "15:04"
 	RFC3339local = "2006-01-02T15:04:05Z"
-	TICK_SECONDS = 1
+	TICK_SECONDS = 600
 )
 
 type NsInformer struct {
@@ -156,13 +156,18 @@ func (n *NsInformer) DeletionTicker(ctx context.Context) {
 
 			expiredNamespaces := n.filterExpiredNamespaces(watchedNamespaces)
 
-			n.logger.Info("Found expired namespaces", "count", len(expiredNamespaces))
-			err = n.processExpiredNamespaces(ctx, expiredNamespaces)
-			if err != nil {
-				n.logger.Error("Could not process expired namespaces", err)
+			if len(expiredNamespaces) > 0 {
+				n.logger.Info("Found expired namespaces", "count", len(expiredNamespaces))
+
+				err = n.processExpiredNamespaces(ctx, expiredNamespaces)
+				if err != nil {
+					n.logger.Error("Could not process expired namespaces", err)
+				}
+			} else {
+				n.logger.Info("Nothing to delete.")
+				time.Sleep(time.Second * 1800)
 			}
 
-			time.Sleep(10 * time.Second)
 			mutex.Unlock()
 		}
 	}
