@@ -28,7 +28,7 @@ func main() {
 	}
 
 	logger := logs.NewLogger(appConfig)
-	logger.Info(fmt.Sprintf("Will watch for namespaces names matched RegExp: %s", appConfig.NsNameRegexp))
+	logger.Info(fmt.Sprintf("Will watch for namespaces names matched RegExp: %s", appConfig.NsNameDeletionRegexp))
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()

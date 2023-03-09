@@ -1,4 +1,4 @@
-namespaces_name_regexp: feature
+deletion_name_regexp: feature
 
 retention:
   days: 1

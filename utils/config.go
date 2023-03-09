@@ -9,14 +9,15 @@ import (
 )
 
 var (
-	validweekdays = []string{"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"}
+	validweekdays        = []string{"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"}
+	NsPreserveAnnotation = "review-reaper-protected"
 )
 
 // TODO: Check if rest of the fields also can be validated. It's probably worth implementing a custom validation function and removing the validator.
 // TODO: Add ignored_namespaces parameter to preserve some namespaces, like ReviewReaper on its own, if it deployed by helm release and namespace named reviewreaper, fxmpl xDDD
 type Config struct {
-	NsNameRegexp         string `validate:"required"`
-	NsNameCompiledRegexp *regexp.Regexp
+	NsNameDeletionRegexp string `validate:"required"`
+	DeletionRegexp       *regexp.Regexp
 	RetentionDays        int `validate:"gte=0"`
 	RetentionHours       int `validate:"gte=0"`
 	DeletionBatchSize    int `validate:"gte=0"`
@@ -24,6 +25,7 @@ type Config struct {
 	IsUninstallReleases  bool
 	PostponeDeletion     bool
 	AnnotationKey        string
+	NsPreserveAnnotation string
 	DeletionWindow       struct {
 		NotBefore string
 		NotAfter  string
@@ -58,8 +60,9 @@ func LoadConfig() (config Config, err error) {
 	viper.SetDefault("annotation_key", "delete_after")
 	viper.SetDefault("postpone_deletion_if_active", false)
 	viper.SetDefault("log_level", "INFO")
+	config.NsPreserveAnnotation = NsPreserveAnnotation
 
-	config.NsNameRegexp = viper.GetString("namespaces_name_regexp")
+	config.NsNameDeletionRegexp = viper.GetString("deletion_name_regexp")
 	config.RetentionDays = viper.GetInt("retention.days")
 	config.RetentionHours = viper.GetInt("retention.hours")
 
@@ -82,7 +85,7 @@ func LoadConfig() (config Config, err error) {
 		return Config{}, err
 	}
 
-	config.NsNameCompiledRegexp, err = regexp.Compile(config.NsNameRegexp)
+	config.DeletionRegexp, err = regexp.Compile(config.NsNameDeletionRegexp)
 	if err != nil {
 		return Config{}, errors.New("Unable to compile regexp")
 	}
@@ -92,7 +95,7 @@ func LoadConfig() (config Config, err error) {
 }
 
 // func validateConfig(c Config) (err error) {
-// 	err = validatePrefixes(c.NsNameRegexp)
+// 	err = validatePrefixes(c.NsNameDeletionRegexp)
 
 // 	return nil
 // }

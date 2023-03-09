@@ -28,7 +28,7 @@ import (
 const (
 	HH_MM        = "15:04"
 	RFC3339local = "2006-01-02T15:04:05Z"
-	TICK_SECONDS = 600
+	TICK_SECONDS = 1
 )
 
 type NsInformer struct {
@@ -81,7 +81,7 @@ func (n *NsInformer) Run(ctx context.Context) error {
 func (n *NsInformer) onAddNamespace(ctx context.Context) func(interface{}) {
 	return func(obj interface{}) {
 		namespace := obj.(*corev1.Namespace)
-		if n.isWatched(namespace.Name) {
+		if n.isWatched(namespace) {
 			n.ensureAnnotated(ctx, namespace)
 		}
 	}
@@ -91,14 +91,16 @@ func (n *NsInformer) onUpdateNamespace(ctx context.Context) func(interface{}, in
 	return func(oldObj interface{}, newObj interface{}) {
 		newNamespace := newObj.(*corev1.Namespace)
 
-		if n.isWatched(newNamespace.Name) {
+		if n.isWatched(newNamespace) {
 			n.ensureAnnotated(ctx, newNamespace)
 		}
 	}
 }
 
-func (n *NsInformer) isWatched(nsName string) bool {
-	return n.appConfig.NsNameCompiledRegexp.MatchString(nsName)
+func (n *NsInformer) isWatched(namespace *corev1.Namespace) bool {
+	isNameWatched := n.appConfig.DeletionRegexp.MatchString(namespace.Name)
+	_, ok := namespace.Annotations[n.appConfig.NsPreserveAnnotation]
+	return isNameWatched && !ok
 }
 
 func (n *NsInformer) ensureAnnotated(ctx context.Context, ns *corev1.Namespace) error {
@@ -108,7 +110,7 @@ func (n *NsInformer) ensureAnnotated(ctx context.Context, ns *corev1.Namespace) 
 		createdAt := n.getNsCreationTimestamp(ns)
 		decommissionTimestamp := n.shiftTimeStampByRetention(createdAt).UTC().Format(time.RFC3339)
 		n.annotateRetention(ctx, ns, decommissionTimestamp)
-		n.logger.Info("Namespace", ns.Name, "annotated for deletion after", "timestamp", decommissionTimestamp)
+		n.logger.Info("Namespace", ns.Name, "annotated for deletion", "deadline timestamp", decommissionTimestamp)
 	}
 
 	return nil
@@ -211,7 +213,7 @@ func (n *NsInformer) listWatchedNamespaces() (namespaces []*corev1.Namespace, er
 	}
 
 	for _, ns := range namespaces {
-		if n.isWatched(ns.Name) {
+		if n.isWatched(ns) && ns.Annotations[n.appConfig.NsPreserveAnnotation] != "true" {
 			watchedNamespaces = append(watchedNamespaces, ns)
 		}
 

@@ -10,7 +10,7 @@ ReviewReaper informer is designed to solve this problem.
 
 - [Installation & Usage](#installation)
 - [Configuration](#configuration)
-  - [namespace_name_regexp](#namespace_name_regexp)
+  - [deletion_name_regexp](#deletion_name_regexp)
   - [retention](#retention)
     - [.days](#days)
     - [.hours](#hours)
@@ -45,14 +45,26 @@ You can find `config.yaml` example in repository root.
 
 Here are description of all config options. Default values used if parameter is not defined in config.yaml when applicable.
 
-### namespaces_name_regexp
+### deletion_name_regexp
 
 A string value that is treated as a regular expression to match the namespaces names that the Review Reaper will track.
 
 Default value: This is the only mandatory parameter, thus it has no default value.
 
 The easiest and most convenient way is to pass a simple regexp with list of substrings that you use in naming your review environments, for example:
-RevewReaper configured with `namespaces_names_regexp: review|feature|trololo` will watch for namespaces that have any of the specified substrings in this regexp.
+RevewReaper configured with `deletion_name_regexp: review|feature|trololo` will watch for namespaces that have any of the specified substrings in this regexp.
+
+If you need to protect some namespaces from being removed by the ReviewReaper, simply add a `review-reaper-protected` annotation with *any string value* (it doesn't have to be a boolean "true" string, etc. The ReviewReaper checks for the existence of the annotation, so its value can be any string), for example, the following namespace will not be deleted and marked for deletion even if its name matches the specified `deletion_name_regexp`:
+
+```
+apiVersion: v1
+kind: Namespace
+metadata:
+  annotations:
+    review-reaper-protected: "true"
+  name: review-reaper
+```
+
 
 ### retention{}
 
