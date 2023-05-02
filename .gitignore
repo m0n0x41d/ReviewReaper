@@ -3,3 +3,5 @@ bin/*
 pkg/*
 !.gitkeep
 ._*
+config.yaml
+e2e/.kubeconfig
