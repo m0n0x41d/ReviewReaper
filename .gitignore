@@ -3,6 +3,6 @@ bin/*
 pkg/*
 !.gitkeep
 ._*
-config.yaml
+./config.yaml
 e2e/.kubeconfig
 e2e/reaper.log
