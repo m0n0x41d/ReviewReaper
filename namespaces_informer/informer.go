@@ -28,7 +28,7 @@ import (
 const (
 	HH_MM        = "15:04"
 	RFC3339local = "2006-01-02T15:04:05Z"
-	TICK_SECONDS = 1
+	TICK_SECONDS = 5
 )
 
 type NsInformer struct {
@@ -167,7 +167,7 @@ func (n *NsInformer) DeletionTicker(ctx context.Context) {
 				}
 			} else {
 				n.logger.Info("Nothing to delete.")
-				time.Sleep(time.Second * 1800)
+				// time.Sleep(time.Second * 1800)
 			}
 
 			mutex.Unlock()

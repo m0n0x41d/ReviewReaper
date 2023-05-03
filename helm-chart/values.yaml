@@ -1,8 +1,8 @@
 replicaCount: 1
 
 image:
-  imageName: reviewReaper:1.0
-  pullPolicy: Always
+  imageName: reviewreaper:test
+  pullPolicy: IfNotPresent
 
 imagePullSecrets:
   - name: registrysecret
@@ -12,7 +12,7 @@ serviceAccount:
   create: true
   annotations: {}
   name: "reviewreaper"
-  clusterRoleName: cluster-admin
+  clusterRoleName: review-reaper
 
 podAnnotations: {}
 

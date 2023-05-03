@@ -1,0 +1,69 @@
+---
+# Source: review-reaper/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: review-reaper-sa
+  namespace: default
+---
+# Source: review-reaper/templates/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  annotations:
+    rbac.authorization.kubernetes.io/autoupdate: "true"
+  name: 
+rules:
+- apiGroups: ["*"]
+  resources: ["*"]
+  verbs: ["get", "list", "watch", "create", "update", "delete", "patch"]
+---
+# Source: review-reaper/templates/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: review-reaper-rbac
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: review-reaper
+subjects:
+  - kind: ServiceAccount
+    name: review-reaper-sa
+    namespace: default
+---
+# Source: review-reaper/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: review-reaper
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: review-reaper
+  template:
+    metadata:
+      labels:
+        app: review-reaper
+    spec:
+      imagePullSecrets:
+        - name: registrysecret
+      serviceAccountName: review-reaper-sa
+      securityContext:
+        {}
+      containers:
+        - name: review-reaper
+          securityContext:
+            {}
+          image: reviewReaper:test
+          imagePullPolicy: Always
+          resources:
+            limits:
+              memory: 256Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+
