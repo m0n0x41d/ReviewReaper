@@ -13,6 +13,13 @@ KUBECONFIG="${SCRIPTPATH}/.kubeconfig"
 
 cd ..
 
+main() {
+    deps_check
+    run_tests
+
+    delete_cluster
+}
+
 deps_check() {
     echo "Checking Docker..."
     if command -v docker >/dev/null; then
@@ -56,16 +63,11 @@ deps_check() {
 
 }
 
-clean_artifacts() {
-    echo "+++ Clean prev test artifacts..."
-    kind delete cluster --name "${CLUSTER_NAME}" > /dev/null 2>&1 || true
-    docker rmi "${IMAGE_NAME}" --force
-}
-
 run_tests() {
     for file in "${SCRIPTPATH}"/test-cases/*.sh
     do
         rm "${SCRIPTPATH}"/test-config.yaml
+        clean_artifacts
         source "$file"
         with_config
         build_code
@@ -75,6 +77,11 @@ run_tests() {
     done
 }
 
+clean_artifacts() {
+    echo "+++ Clean prev test artifacts..."
+    kind delete cluster --name "${CLUSTER_NAME}" > /dev/null 2>&1 || true
+    docker rmi "${IMAGE_NAME}" --force
+}
 
 build_code() {
     echo "+++ Building ReviewReaper with test config..."
@@ -103,14 +110,6 @@ delete_cluster(){
     echo "+++ Deleting cluster..."
     kind delete cluster --name "${CLUSTER_NAME}" > /dev/null 2>&1 || true
     echo "Bye!"
-}
-
-main() {
-    deps_check
-    clean_artifacts
-
-    run_tests
-
 }
 
 main
