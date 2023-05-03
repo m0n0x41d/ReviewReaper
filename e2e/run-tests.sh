@@ -63,7 +63,16 @@ clean_artifacts() {
 }
 
 run_tests() {
-
+    for file in "${SCRIPTPATH}"/test-cases/*.sh
+    do
+        rm "${SCRIPTPATH}"/test-config.yaml
+        source "$file"
+        with_config
+        build_code
+        bootstrap_and_deploy
+        run_test
+        delete_cluster
+    done
 }
 
 
@@ -99,9 +108,9 @@ delete_cluster(){
 main() {
     deps_check
     clean_artifacts
-    build_code
 
     run_tests
+
 }
 
 main
