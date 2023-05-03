@@ -4,5 +4,6 @@ pkg/*
 !.gitkeep
 ._*
 ./config.yaml
+e2e/test-config.yaml
 e2e/.kubeconfig
 e2e/reaper.log

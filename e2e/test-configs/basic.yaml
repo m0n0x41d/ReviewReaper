@@ -1,4 +1,4 @@
-deletion_name_regexp: testtest
+deletion_name_regexp: feature
 
 retention:
   days: 1
