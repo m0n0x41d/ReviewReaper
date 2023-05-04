@@ -33,6 +33,7 @@ type Config struct {
 	}
 
 	LogLevel string
+	DryRun   bool
 }
 
 var validate = validator.New()
@@ -60,6 +61,7 @@ func LoadConfig() (config Config, err error) {
 	viper.SetDefault("annotation_key", "delete_after")
 	viper.SetDefault("postpone_deletion_if_active", false)
 	viper.SetDefault("log_level", "INFO")
+	viper.SetDefault("dry_run", false)
 	config.NsPreserveAnnotation = NsPreserveAnnotation
 
 	config.NsNameDeletionRegexp = viper.GetString("deletion_name_regexp")
@@ -78,6 +80,7 @@ func LoadConfig() (config Config, err error) {
 	config.PostponeDeletion = viper.GetBool("postpone_deletion_if_active")
 
 	config.LogLevel = viper.GetString("log_level")
+	config.DryRun = viper.GetBool("dry_run")
 
 	// safeChecks
 	err = validate.Struct(config)

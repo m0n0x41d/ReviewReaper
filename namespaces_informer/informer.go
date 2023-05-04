@@ -24,7 +24,6 @@ import (
 	"k8s.io/client-go/tools/cache"
 )
 
-// pass this in struct below. Make corresponding functions struct methods.
 const (
 	HH_MM        = "15:04"
 	RFC3339local = "2006-01-02T15:04:05Z"
@@ -238,6 +237,7 @@ func (n *NsInformer) postponeDelOfActive(ctx context.Context, watchedNamespaces 
 		if latestDeployTs.After(nsCreationTs) && latestDeployTs.Before(nsDeletionTs) {
 			newRetention := n.shiftTimeStampByRetention(latestDeployTs).UTC().Format(time.RFC3339)
 			n.annotateRetention(ctx, ns, newRetention)
+			n.logger.Info("namespace", ns.Name, "deletion postponed for", newRetention)
 		}
 	}
 	return nil
@@ -251,7 +251,6 @@ func (n *NsInformer) latestDeployedRelease(releases []*release.Release) *release
 			latest = release
 		}
 	}
-
 	return latest
 }
 
@@ -336,26 +335,35 @@ func (n *NsInformer) processExpiredNamespaces(ctx context.Context, namespaces []
 
 func (n *NsInformer) deleteNamespaces(ctx context.Context, namespaces []*corev1.Namespace) error {
 	deleteOptions := metav1.DeleteOptions{}
+
 	for _, ns := range namespaces {
 
 		if n.appConfig.IsUninstallReleases {
-			releases, err := n.listNamespaceReleases(ns)
+			if n.appConfig.DryRun {
+				n.logger.Info("want to uininstall releases from namespace", ns.Name, "but it is DryRun")
+			} else {
+				releases, err := n.listNamespaceReleases(ns)
+				if err != nil {
+					n.logger.Error("Could not list releases", "namespace", ns.Name)
+				}
+				n.deleteNamespaceReleases(releases, ns)
+			}
+		}
+
+		if n.appConfig.DryRun {
+			n.logger.Info("want to delete namespace", ns.Name, "but it is DryRun")
+			continue
+		} else {
+			err := n.client.CoreV1().Namespaces().Delete(ctx, ns.Name, deleteOptions)
 			if err != nil {
-				n.logger.Error("Could not list releases", "namespace", ns.Name)
+				// If the namespace is already deleted, return without error.
+				if apierrors.IsNotFound(err) {
+					return nil
+				}
+				return err
 			}
-			n.deleteNamespaceReleases(releases, ns)
+			n.logger.Info("Namespace", ns.Name, "Deleted.")
 		}
-
-		err := n.client.CoreV1().Namespaces().Delete(ctx, ns.Name, deleteOptions)
-		if err != nil {
-			// If the namespace is already deleted, return without error.
-			if apierrors.IsNotFound(err) {
-				return nil
-			}
-			return err
-		}
-		n.logger.Info("Namespace", ns.Name, "Deleted.")
-
 	}
 	return nil
 }

@@ -22,6 +22,8 @@ ReviewReaper informer is designed to solve this problem.
     - [.not_after](#not_after)
     - [.week_days](#week_days)
   - [postpone_deletion_if_active](#postpone_deletion_if_active)
+  - [annotation_key](#annotation_key)
+  - [dry_run](#dry_run)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -152,6 +154,9 @@ A string parameter that will be treated as an annotation key used to store the t
 
 Default value: `delete_after`
 
+### dry_run
+
+Bool parameter turning off destructive actions (deletion of releases and namespaces). Undestractive actions will remain (annotating watched namespaces, etc.)
 
 ## Contributing
 
