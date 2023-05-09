@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -28,7 +27,7 @@ func main() {
 	}
 
 	logger := logs.NewLogger(appConfig)
-	logger.Info(fmt.Sprintf("Will watch for namespaces names matched RegExp: %s", appConfig.NsNameDeletionRegexp))
+	logs.StartUp(appConfig, logger)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()

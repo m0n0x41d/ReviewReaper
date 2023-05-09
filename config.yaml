@@ -14,5 +14,7 @@ uninstall_releases: true
 postpone_deletion_if_active: true
 
 deletion_windows:
-  not_before: "00:00"
+  not_before: "19:00"
   not_after:  "23:59"
+
+dry_run: true

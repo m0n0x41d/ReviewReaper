@@ -146,7 +146,7 @@ func (n *NsInformer) DeletionTicker(ctx context.Context) {
 	for range ticker.C {
 		tickTime := <-ticker.C
 		if n.isAllowedWindow(tickTime) && mutex.TryLock() {
-			n.logger.Info("Engaging in maintenance procedures", "Time", tickTime.UTC().Format(time.RFC822))
+			n.logger.Info("Engaging in maintenance procedures", "At", tickTime.UTC().Format(time.RFC822))
 			watchedNamespaces, err := n.listWatchedNamespaces()
 			if err != nil {
 				n.logger.Error("Could not list watched namespaces for deletion", err)
@@ -168,7 +168,6 @@ func (n *NsInformer) DeletionTicker(ctx context.Context) {
 				n.logger.Info("Nothing to delete.")
 				// time.Sleep(time.Second * 1800)
 			}
-
 			mutex.Unlock()
 		}
 	}
@@ -340,7 +339,7 @@ func (n *NsInformer) deleteNamespaces(ctx context.Context, namespaces []*corev1.
 
 		if n.appConfig.IsUninstallReleases {
 			if n.appConfig.DryRun {
-				n.logger.Info("want to uininstall releases from namespace", ns.Name, "but it is DryRun")
+				n.logger.Info("[DRY-RUN] want to uininstall releases from", "namespace", ns.Name)
 			} else {
 				releases, err := n.listNamespaceReleases(ns)
 				if err != nil {
@@ -351,7 +350,7 @@ func (n *NsInformer) deleteNamespaces(ctx context.Context, namespaces []*corev1.
 		}
 
 		if n.appConfig.DryRun {
-			n.logger.Info("want to delete namespace", ns.Name, "but it is DryRun")
+			n.logger.Info("[DRY-RUN] want to delete", "namespace", ns.Name)
 			continue
 		} else {
 			err := n.client.CoreV1().Namespaces().Delete(ctx, ns.Name, deleteOptions)
