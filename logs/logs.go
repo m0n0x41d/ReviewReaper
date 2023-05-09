@@ -24,6 +24,7 @@ func StartUp(appConfig utils.Config, logger hclog.Logger) {
 }
 
 func printConfig(s interface{}) string {
+	hiddenFields := []string{"DeletionRegexp"}
 	structType := reflect.TypeOf(s)
 	structValue := reflect.ValueOf(s)
 
@@ -31,6 +32,9 @@ func printConfig(s interface{}) string {
 	for i := 0; i < structType.NumField(); i++ {
 		field := structType.Field(i)
 		value := structValue.Field(i)
+		if utils.IsContains(hiddenFields, field.Name) {
+			continue
+		}
 		config += fmt.Sprintf("\t%s: %v\n", field.Name, value.Interface())
 	}
 

@@ -10,20 +10,20 @@ ReviewReaper informer is designed to solve this problem.
 
 - [Installation & Usage](#installation)
 - [Configuration](#configuration)
-  - [deletion_name_regexp](#deletion_name_regexp)
+  - [NsNameDeletionRegexp](#NsNameDeletionRegexp)
   - [retention](#retention)
     - [.days](#days)
     - [.hours](#hours)
-  - [deletion_batch_size](#deletion_batch_size)
-  - [deletion_nap_seconds](#deletion_nap_seconds)
-  - [uninstall_releases](#uninstall_releases)
-  - [deletion_windows](#deletion_windows)
-    - [.not_before](#not_before)
-    - [.not_after](#not_after)
-    - [.week_days](#week_days)
-  - [postpone_deletion_if_active](#postpone_deletion_if_active)
-  - [annotation_key](#annotation_key)
-  - [dry_run](#dry_run)
+  - [DeletionBatchSize](#DeletionBatchSize)
+  - [DeletionNapSeconds](#DeletionNapSeconds)
+  - [IsUninstallReleases](#IsUninstallReleases)
+  - [DeletionWindow](#DeletionWindow)
+    - [.NotBefore](#NotBefore)
+    - [.NotAfter](#NotAfter)
+    - [.WeekDays](#WeekDays)
+  - [PostoneNsDeletionByHelmDeploy](#PostoneNsDeletionByHelmDeploy)
+  - [AnnotationKey](#AnnotationKey)
+  - [DryRun](#DryRun)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -33,7 +33,7 @@ Build from source, configure by simple config file and deploy in your cluster. S
 
 You might run ReviewReaper locally with kubeconfig, just set path to kubeconfig in `KUBECONFIG` env variable.
 
-All timestamps and time related configuration (such as [deletion window](#deletion_windows{})) is treated and assumed as UTC.
+All timestamps and time related configuration (such as [deletion window](#DeletionWindow{})) is treated and assumed as UTC.
 
 ## Configuration
 
@@ -47,16 +47,16 @@ You can find `config.yaml` example in repository root.
 
 Here are description of all config options. Default values used if parameter is not defined in config.yaml when applicable.
 
-### deletion_name_regexp
+### NsNameDeletionRegexp
 
 A string value that is treated as a regular expression to match the namespaces names that the Review Reaper will track.
 
 Default value: This is the only mandatory parameter, thus it has no default value.
 
 The easiest and most convenient way is to pass a simple regexp with list of substrings that you use in naming your review environments, for example:
-RevewReaper configured with `deletion_name_regexp: review|feature|trololo` will watch for namespaces that have any of the specified substrings in this regexp.
+RevewReaper configured with `NsNameDeletionRegexp: review|feature|trololo` will watch for namespaces that have any of the specified substrings in this regexp.
 
-If you need to protect some namespaces from being removed by the ReviewReaper, simply add a `review-reaper-protected` annotation with *any string value* (it doesn't have to be a boolean "true" string, etc. The ReviewReaper checks for the existence of the annotation, so its value can be any string), for example, the following namespace will not be deleted and marked for deletion even if its name matches the specified `deletion_name_regexp`:
+If you need to protect some namespaces from being removed by the ReviewReaper, simply add a `review-reaper-protected` annotation with *any string value* (it doesn't have to be a boolean "true" string, etc. The ReviewReaper checks for the existence of the annotation, so its value can be any string), for example, the following namespace will not be deleted and marked for deletion even if its name matches the specified `NsNameDeletionRegexp`:
 
 ```
 apiVersion: v1
@@ -84,13 +84,13 @@ Fine-tune addition for `retention_days`, thi is also an integer that is treated 
 
 Default value: `0`
 
-### deletion_batch_size
+### DeletionBatchSize
 
 An integer considered as a namespace package to be iteratively deleted.
 
 Default value: `0` — treated as delete all in one batch.
 
-### deletion_nap_seconds
+### DeletionNapSeconds
 
 An integer of seconds to sleep in deletion loop between batches deletion.
 
@@ -106,7 +106,7 @@ So, if ReviewReaper, or user viw kubectl will delete `N` namespaces with `X` in 
 
 Use ReviewReaper deletion_* parameters to avoid such cases :)
 
-### uninstall_releases
+### IsUninstallReleases
 
 A boolean parameter that enables the removal of helm releases via helm-sdk in expired namespaces before deleting the namespace itself.
 
@@ -115,32 +115,32 @@ It might be usefull if your releases have some helm-hooks in it, like post-delet
 Default value: `false` — Namespaces are removed entirely, without deleting releases via helm
 
 
-### deletion_windows{}
+### DeletionWindow{}
 
 Configuration map allows you to set a maintenance windows in which ReviewReaper will delete watched namespaces.
 
-Depending on the configuration, other processes may run in this window. For example [deletion postpone](#postpone_deletion_if_active). So it's actually a "ReviewReaper maintenance window" :)
+Depending on the configuration, other processes may run in this window. For example [deletion postpone](#PostoneNsDeletionByHelmDeploy). So it's actually a "ReviewReaper maintenance window" :)
 
-#### .not_before
+#### .NotBefore
 
 String in 24h HH:MM format, treated as start of deletion_window.
 
 Default value: `00:00`
 
-#### .not_after
+#### .NotAfter
 
 String in 24h HH:MM format, treated as end of deletion_window.
 
 Defaul value: `06:00`
 
-#### week_days
+#### WeekDays
 
 List of strings of three-letter capitalized days of the week abbreviations, considered as allowed days of the week, for the deletetion window specified in the above two parameters.
 
 Default value: `["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]`
 
 
-### postpone_deletion_if_active
+### PostoneNsDeletionByHelmDeploy
 
 A Bool parameter that allows to enable automatic redefinition on review namespace deletion timestamp (during deletion window), if at least one helm release has been deployed in that watched review namespace during its initial retention window.
 
@@ -148,13 +148,13 @@ Yes, some teams uses review as kind of short time continious dev environments.
 
 Default value: `false`
 
-### annotation_key
+### AnnotationKey
 
 A string parameter that will be treated as an annotation key used to store the timestamp of the deletion of tracked namespaces.
 
 Default value: `delete_after`
 
-### dry_run
+### DryRun
 
 Bool parameter turning off destructive actions (deletion of releases and namespaces). Undestractive actions will remain (annotating watched namespaces, etc.)
 

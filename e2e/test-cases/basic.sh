@@ -2,24 +2,24 @@
 
 with_config() {
 cat << EOF > "${SCRIPTPATH}"/test-config.yaml
-deletion_name_regexp: feature
+NsNameDeletionRegexp: feature
 
 retention:
   days: 1
   hours: 1
 
-deletion_batch_size: 3
-deletion_nap_seconds: 10
+DeletionBatchSize: 3
+DeletionNapSeconds: 10
 
-annotation_key: delete_after
+AnnotationKey: delete_after
 
-uninstall_releases: true
+IsUninstallReleases: true
 
-postpone_deletion_if_active: true
+PostoneNsDeletionByHelmDeploy: true
 
-deletion_windows:
-  not_before: "20:00"
-  not_after:  "22:00"
+DeletionWindow:
+  NotBefore: "20:00"
+  NotAfter:  "22:00"
 EOF
 }
 
