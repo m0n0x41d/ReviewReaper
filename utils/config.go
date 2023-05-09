@@ -2,6 +2,7 @@ package utils
 
 import (
 	"errors"
+	"fmt"
 	"regexp"
 
 	"github.com/go-playground/validator/v10"
@@ -9,7 +10,7 @@ import (
 )
 
 var (
-	validweekdays        = []string{"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"}
+	defaultWeekDays      = []string{"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"}
 	NsPreserveAnnotation = "review-reaper-protected"
 )
 
@@ -57,7 +58,7 @@ func LoadConfig() (config Config, err error) {
 	viper.SetDefault("IsUninstallReleases", false)
 	viper.SetDefault("DeletionWindow.NotBefore", "00:00")
 	viper.SetDefault("DeletionWindow.NotAfter", "06:00")
-	viper.SetDefault("DeletionWindow.WeekDays", validweekdays)
+	viper.SetDefault("DeletionWindow.WeekDays", defaultWeekDays)
 	viper.SetDefault("AnnotationKey", "delete_after")
 	viper.SetDefault("PostoneNsDeletionByHelmDeploy", false)
 	viper.SetDefault("LogLevel", "INFO")
@@ -93,23 +94,40 @@ func LoadConfig() (config Config, err error) {
 		return Config{}, errors.New("Unable to compile regexp")
 	}
 
-	// validateConfig(config)
-	return config, nil
+	return config, validateConfig(config)
 }
 
-// func validateConfig(c Config) (err error) {
-// 	err = validatePrefixes(c.NsNameDeletionRegexp)
+func validateConfig(c Config) (err error) {
+	validationFuncs := []func(Config) error{
+		validateWeekDays,
+	}
 
-// 	return nil
-// }
+	for _, f := range validationFuncs {
+		if err := f(c); err != nil {
+			return err
+		}
+	}
 
-// func validatePrefixes(s []string) error {
+	return nil
+}
 
-// 	for _, prefix := range s {
-// 		errs := validation.IsDNS1123Label(s[0])
-// 		if len(errs) > 0 {
-// 			return fmt.Errorf("namespace prefix '%s' not a lowercase RFC 1123 label", prefix)
-// 		}
-// 	}
-// 	return nil
-// }
+func validateWeekDays(c Config) error {
+	err := fmt.Errorf("Invalid weekdays in config DeletionWindow.WeekDays")
+	validWeekdays := map[string]bool{
+		"Mon": true,
+		"Tue": true,
+		"Wed": true,
+		"Thu": true,
+		"Fri": true,
+		"Sat": true,
+		"Sun": true,
+	}
+
+	for _, day := range c.DeletionWindow.WeekDays {
+		if len(day) != 3 || !validWeekdays[day] {
+			return err
+		}
+	}
+
+	return nil
+}

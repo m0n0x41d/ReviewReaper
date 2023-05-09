@@ -14,7 +14,8 @@ IsUninstallReleases: true
 PostoneNsDeletionByHelmDeploy: true
 
 DeletionWindow:
-  NotBefore: "19:00"
+  NotBefore: "00:00"
   NotAfter:  "23:59"
+  WeekDays: [Mon, Tue, Wed, Thu, Fri, Sat, Sun]
 
 DryRun: true

@@ -22,7 +22,6 @@ func main() {
 
 	appConfig, err := utils.LoadConfig()
 	if err != nil {
-
 		panic(err)
 	}
 
@@ -39,13 +38,15 @@ func main() {
 
 	clusterClient, err := kubernetes.NewForConfig(clusterConfig)
 	if err != nil {
-		logger.Error("Could not make client", err)
+		logger.Error("Could not make ClientSet", err)
 	}
 
 	newInformer := namespaces_informer.NewNsInformer(clusterConfig, clusterClient, logger, appConfig)
 	if err := newInformer.Run(ctx); err != nil {
 		logger.Error("Could not start informer", err)
 	}
+
+	logger.Info("Successfully started the reconciliation loop.")
 
 	<-ctx.Done()
 }

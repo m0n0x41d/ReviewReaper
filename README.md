@@ -68,17 +68,17 @@ metadata:
 ```
 
 
-### retention{}
+### Retention{}
 
 Configuration map with the following two values, used to configure watched review namespaces retention time.
 
-#### .days
+#### .Days
 
 An integer number of days that will be treated as the retention time of the namespace since it was created.
 
 Default value: `7`
 
-#### .hours
+#### .Hours
 
 Fine-tune addition for `retention_days`, thi is also an integer that is treated as the retention time in hours to be added to the `retention_days`.
 
@@ -119,7 +119,9 @@ Default value: `false` — Namespaces are removed entirely, without deleting rel
 
 Configuration map allows you to set a maintenance windows in which ReviewReaper will delete watched namespaces.
 
-Depending on the configuration, other processes may run in this window. For example [deletion postpone](#PostoneNsDeletionByHelmDeploy). So it's actually a "ReviewReaper maintenance window" :)
+**IMPORTANT**: Please note that all times are counted as UTC. Make sure to adjust your settings accordingly.
+
+Depending on the configuration, other processes may run in this window. For example [PostoneNsDeletionByHelmDeploy](#PostoneNsDeletionByHelmDeploy). So it's actually a "ReviewReaper maintenance window" :)
 
 #### .NotBefore
 

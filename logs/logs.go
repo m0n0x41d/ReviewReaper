@@ -21,6 +21,7 @@ func NewLogger(appConfig utils.Config) hclog.Logger {
 
 func StartUp(appConfig utils.Config, logger hclog.Logger) {
 	logger.Info(printConfig(appConfig))
+	logger.Info("Verifying connection and attempting to initiate reconciliation loop...")
 }
 
 func printConfig(s interface{}) string {

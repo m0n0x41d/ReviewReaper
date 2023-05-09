@@ -3,6 +3,7 @@ package namespaces_informer
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -69,7 +70,7 @@ func (n *NsInformer) Run(ctx context.Context) error {
 	go informerFactory.Start(ctx.Done())
 	// start to sync and call list
 	if !cache.WaitForCacheSync(ctx.Done(), namespaceInformer.HasSynced) {
-		return errors.New("timed out waiting for caches to sync")
+		return errors.New("Timeout occurred while waiting for caches to synchronize")
 	}
 
 	go n.DeletionTicker(ctx)
@@ -109,7 +110,7 @@ func (n *NsInformer) ensureAnnotated(ctx context.Context, ns *corev1.Namespace) 
 		createdAt := n.getNsCreationTimestamp(ns)
 		decommissionTimestamp := n.shiftTimeStampByRetention(createdAt).UTC().Format(time.RFC3339)
 		n.annotateRetention(ctx, ns, decommissionTimestamp)
-		n.logger.Info("Namespace", ns.Name, "annotated for deletion", "deadline timestamp", decommissionTimestamp)
+		n.logger.Info("Annotated for deletion", "NsName", ns.Name, "DeletionTimestamp", decommissionTimestamp)
 	}
 
 	return nil
@@ -135,7 +136,7 @@ func (n *NsInformer) annotateRetention(ctx context.Context, ns *corev1.Namespace
 	_, err := n.client.CoreV1().Namespaces().Update(ctx, newNs, updateOptions)
 
 	if err != nil {
-		n.logger.Error("Unable annotate", "namespace", ns.Name, "err", err)
+		n.logger.Error("Unable to annotate", "NsName", ns.Name, "ERROR:", err)
 	}
 	return nil
 }
@@ -145,8 +146,8 @@ func (n *NsInformer) DeletionTicker(ctx context.Context) {
 	mutex := new(sync.Mutex)
 	for range ticker.C {
 		tickTime := <-ticker.C
-		if n.isAllowedWindow(tickTime) && mutex.TryLock() {
-			n.logger.Info("Engaging in maintenance procedures", "At", tickTime.UTC().Format(time.RFC822))
+		if n.isAllowedWindow() && mutex.TryLock() {
+			n.logger.Info("Beginning scheduled maintenance, At", tickTime.UTC().Format(time.RFC822))
 			watchedNamespaces, err := n.listWatchedNamespaces()
 			if err != nil {
 				n.logger.Error("Could not list watched namespaces for deletion", err)
@@ -158,7 +159,7 @@ func (n *NsInformer) DeletionTicker(ctx context.Context) {
 			expiredNamespaces := n.filterExpiredNamespaces(watchedNamespaces)
 
 			if len(expiredNamespaces) > 0 {
-				n.logger.Info("Found expired namespaces", "count", len(expiredNamespaces))
+				n.logger.Info("Found expired namespaces", "Count", len(expiredNamespaces))
 
 				err = n.processExpiredNamespaces(ctx, expiredNamespaces)
 				if err != nil {
@@ -169,37 +170,46 @@ func (n *NsInformer) DeletionTicker(ctx context.Context) {
 				// time.Sleep(time.Second * 1800)
 			}
 			mutex.Unlock()
+		} else {
+			n.logger.Info("Waiting for maintenance window to start...")
 		}
 	}
 	<-ctx.Done()
 	n.logger.Info("Finishig deletion ticker...")
 }
 
-func (n *NsInformer) isAllowedWindow(t time.Time) bool {
-
+func (n *NsInformer) isAllowedWindow() bool {
+	timeNow := time.Now().UTC()
 	isAllowed := false
 
 	nbCfg := n.appConfig.DeletionWindow.NotBefore
 	naCfg := n.appConfig.DeletionWindow.NotAfter
 
-	todayWeekday := t.UTC().Weekday().String()[0:3]
-	weekdayOk := utils.IsContains(n.appConfig.DeletionWindow.WeekDays, todayWeekday)
+	// todayWeekday := t.UTC().Weekday().String()[0:3]
+	// weekdayOk := utils.IsContains(n.appConfig.DeletionWindow.WeekDays, todayWeekday)
 
-	if weekdayOk == false {
+	if !n.isTodayAllowed(timeNow) {
+		fmt.Println("Today is not allowed")
 		return isAllowed
 	}
 
 	notBeforeCfg, _ := time.Parse(HH_MM, nbCfg)
 	notAfterCfg, _ := time.Parse(HH_MM, naCfg)
 
-	notBefore := time.Date(t.Year(), t.Month(), t.Day(), notBeforeCfg.Hour(), notBeforeCfg.Minute(), 0, 0, time.UTC)
-	notAfter := time.Date(t.Year(), t.Month(), t.Day(), notAfterCfg.Hour(), notAfterCfg.Minute(), 0, 0, time.UTC)
+	notBefore := time.Date(timeNow.Year(), timeNow.Month(), timeNow.Day(), notBeforeCfg.Hour(), notBeforeCfg.Minute(), 0, 0, time.UTC)
+	notAfter := time.Date(timeNow.Year(), timeNow.Month(), timeNow.Day(), notAfterCfg.Hour(), notAfterCfg.Minute(), 0, 0, time.UTC)
 
-	if t.After(notBefore) && t.Before(notAfter) {
+	if timeNow.After(notBefore) && timeNow.Before(notAfter) {
 		isAllowed = true
 	}
 
 	return isAllowed
+}
+
+func (n *NsInformer) isTodayAllowed(t time.Time) bool {
+	todayWeekday := t.UTC().Weekday().String()[0:3]
+	weekdayOk := utils.IsContains(n.appConfig.DeletionWindow.WeekDays, todayWeekday)
+	return weekdayOk
 }
 
 func (n *NsInformer) listWatchedNamespaces() (namespaces []*corev1.Namespace, err error) {
