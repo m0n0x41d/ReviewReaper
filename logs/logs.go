@@ -31,7 +31,7 @@ func printConfig(s interface{}) string {
 	config := fmt.Sprintf("\n\n%v:\n", "Loaded config")
 	printFields(structValue, hiddenFields, "\t", &config)
 
-	config += "\n The config options is described in the repository's README.md"
+	config += "\nThe config options is described in the repository's README.md\n"
 	return config
 }
 

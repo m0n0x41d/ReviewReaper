@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"time"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/spf13/viper"
@@ -12,6 +13,9 @@ import (
 var (
 	defaultWeekDays      = []string{"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"}
 	NsPreserveAnnotation = "review-reaper-protected"
+
+	errMaintenanceDaysInvalid   = fmt.Errorf("Invalid weekdays in config DeletionWindow.WeekDays")
+	errMaintenanceWindowInvalid = fmt.Errorf("Timewindow invalid, NotBefore should be less than NotAfter")
 )
 
 // TODO: Check if rest of the fields also can be validated. It's probably worth implementing a custom validation function and removing the validator.
@@ -83,6 +87,8 @@ func LoadConfig() (config Config, err error) {
 	config.LogLevel = viper.GetString("LogLevel")
 	config.DryRun = viper.GetBool("DryRun")
 
+	sortWeekDays(&config)
+
 	// safeChecks
 	err = validate.Struct(config)
 	if err != nil {
@@ -100,6 +106,7 @@ func LoadConfig() (config Config, err error) {
 func validateConfig(c Config) (err error) {
 	validationFuncs := []func(Config) error{
 		validateWeekDays,
+		validateTimeWindow,
 	}
 
 	for _, f := range validationFuncs {
@@ -112,7 +119,6 @@ func validateConfig(c Config) (err error) {
 }
 
 func validateWeekDays(c Config) error {
-	err := fmt.Errorf("Invalid weekdays in config DeletionWindow.WeekDays")
 	validWeekdays := map[string]bool{
 		"Mon": true,
 		"Tue": true,
@@ -125,9 +131,40 @@ func validateWeekDays(c Config) error {
 
 	for _, day := range c.DeletionWindow.WeekDays {
 		if len(day) != 3 || !validWeekdays[day] {
-			return err
+			return errMaintenanceDaysInvalid
 		}
 	}
 
 	return nil
+}
+
+func validateTimeWindow(c Config) error {
+	HH_MM := "15:04"
+	notBefore, err := time.Parse(HH_MM, c.DeletionWindow.NotBefore)
+	if err != nil {
+		return err
+	}
+	notAfter, err := time.Parse(HH_MM, c.DeletionWindow.NotAfter)
+	if err != nil {
+		return err
+	}
+
+	if notBefore.Equal(notAfter) {
+		return errMaintenanceWindowInvalid
+	}
+	if notAfter.Before(notBefore) {
+		return errMaintenanceWindowInvalid
+	}
+
+	return nil
+}
+
+func sortWeekDays(c *Config) {
+	sortedWeekDays := []string{}
+	for _, day := range defaultWeekDays {
+		if IsContains(c.DeletionWindow.WeekDays, day) {
+			sortedWeekDays = append(sortedWeekDays, day)
+		}
+	}
+	c.DeletionWindow.WeekDays = sortedWeekDays
 }

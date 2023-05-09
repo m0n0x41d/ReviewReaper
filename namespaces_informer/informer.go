@@ -146,8 +146,9 @@ func (n *NsInformer) DeletionTicker(ctx context.Context) {
 	mutex := new(sync.Mutex)
 	for range ticker.C {
 		tickTime := <-ticker.C
-		if n.isAllowedWindow() && mutex.TryLock() {
-			n.logger.Info("Beginning scheduled maintenance, At", tickTime.UTC().Format(time.RFC822))
+		if n.isAllowedWindow() {
+			mutex.Lock()
+			n.logger.Info("Beginning scheduled maintenance", "At", tickTime.UTC().Format(time.RFC822))
 			watchedNamespaces, err := n.listWatchedNamespaces()
 			if err != nil {
 				n.logger.Error("Could not list watched namespaces for deletion", err)
@@ -167,11 +168,12 @@ func (n *NsInformer) DeletionTicker(ctx context.Context) {
 				}
 			} else {
 				n.logger.Info("Nothing to delete.")
-				// time.Sleep(time.Second * 1800)
 			}
 			mutex.Unlock()
 		} else {
-			n.logger.Info("Waiting for maintenance window to start...")
+			sleepFor := n.durationUntilMaintenance()
+			n.logger.Info("Will sleep until next maintenance window", "SleepFor", sleepFor)
+			time.Sleep(sleepFor)
 		}
 	}
 	<-ctx.Done()
@@ -182,24 +184,7 @@ func (n *NsInformer) isAllowedWindow() bool {
 	timeNow := time.Now().UTC()
 	isAllowed := false
 
-	nbCfg := n.appConfig.DeletionWindow.NotBefore
-	naCfg := n.appConfig.DeletionWindow.NotAfter
-
-	// todayWeekday := t.UTC().Weekday().String()[0:3]
-	// weekdayOk := utils.IsContains(n.appConfig.DeletionWindow.WeekDays, todayWeekday)
-
-	if !n.isTodayAllowed(timeNow) {
-		fmt.Println("Today is not allowed")
-		return isAllowed
-	}
-
-	notBeforeCfg, _ := time.Parse(HH_MM, nbCfg)
-	notAfterCfg, _ := time.Parse(HH_MM, naCfg)
-
-	notBefore := time.Date(timeNow.Year(), timeNow.Month(), timeNow.Day(), notBeforeCfg.Hour(), notBeforeCfg.Minute(), 0, 0, time.UTC)
-	notAfter := time.Date(timeNow.Year(), timeNow.Month(), timeNow.Day(), notAfterCfg.Hour(), notAfterCfg.Minute(), 0, 0, time.UTC)
-
-	if timeNow.After(notBefore) && timeNow.Before(notAfter) {
+	if n.isTodayAllowed(timeNow) && n.isTimeAllowed(timeNow) {
 		isAllowed = true
 	}
 
@@ -208,8 +193,85 @@ func (n *NsInformer) isAllowedWindow() bool {
 
 func (n *NsInformer) isTodayAllowed(t time.Time) bool {
 	todayWeekday := t.UTC().Weekday().String()[0:3]
-	weekdayOk := utils.IsContains(n.appConfig.DeletionWindow.WeekDays, todayWeekday)
+	return n.isDayAllowed(todayWeekday)
+}
+
+func (n *NsInformer) isDayAllowed(day string) bool {
+	weekdayOk := utils.IsContains(n.appConfig.DeletionWindow.WeekDays, day)
 	return weekdayOk
+}
+
+func (n *NsInformer) isTimeAllowed(t time.Time) bool {
+	isAllowed := false
+	nbCfg, _ := time.Parse(HH_MM, n.appConfig.DeletionWindow.NotBefore)
+	naCfg, _ := time.Parse(HH_MM, n.appConfig.DeletionWindow.NotAfter)
+
+	notBefore := time.Date(t.Year(), t.Month(), t.Day(), nbCfg.Hour(), nbCfg.Minute(), 0, 0, time.UTC)
+	notAfter := time.Date(t.Year(), t.Month(), t.Day(), naCfg.Hour(), naCfg.Minute(), 0, 0, time.UTC)
+
+	if t.After(notBefore) && t.Before(notAfter) {
+		isAllowed = true
+	}
+	return isAllowed
+}
+
+func (n *NsInformer) durationUntilMaintenance() time.Duration {
+	now := time.Now().UTC()
+	nextMaintenanceTime := n.getNextMaintenanceTime(now)
+	fmt.Println("Next maintenance window start", "Timestamp", nextMaintenanceTime)
+	timeDifference := time.Until(time.Unix(nextMaintenanceTime.Unix(), 0))
+	return timeDifference
+}
+
+func (n *NsInformer) getNextMaintenanceTime(now time.Time) time.Time {
+	today := now.Weekday()
+	currentMonth := now.Month()
+	currentYear := now.Year()
+	var nextAllowedDayNumber int
+	var daysUntilNextWeekday int
+
+	dayMap := map[string]int{
+		"Sun": 0,
+		"Mon": 1,
+		"Tue": 2,
+		"Wed": 3,
+		"Thu": 4,
+		"Fri": 5,
+		"Sat": 6}
+
+	n.logger.Info("Seeking next allowed maintenance window")
+	if !n.isTodayAllowed(now) {
+		for _, day := range n.appConfig.DeletionWindow.WeekDays {
+			if n.isDayAllowed(day) {
+				nextAllowedDayNumber = dayMap[day]
+				n.logger.Info("Next allowed maintanance", "day", day)
+				break
+			}
+		}
+		daysUntilNextWeekday = (nextAllowedDayNumber + 7 - int(today)) % 7
+	}
+
+	if n.isTodayAllowed(now) && !n.isTimeAllowed(now) {
+		nextAllowedDayNumber = int(today)
+		daysUntilNextWeekday = 7
+	}
+
+	if nextAllowedDayNumber <= int(today) {
+		currentYear, currentMonth, _ = now.AddDate(0, 0, 7).Date()
+	}
+
+	nbCfg, _ := time.Parse(HH_MM, n.appConfig.DeletionWindow.NotBefore)
+
+	nextDate := time.Date(
+		currentYear,
+		currentMonth,
+		int(now.Day())+daysUntilNextWeekday,
+		nbCfg.Hour(),
+		nbCfg.Minute(),
+		0,
+		0, time.UTC)
+
+	return nextDate
 }
 
 func (n *NsInformer) listWatchedNamespaces() (namespaces []*corev1.Namespace, err error) {
