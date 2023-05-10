@@ -1,14 +1,13 @@
 package namespaces_informer
 
 import (
+	"NaNameUz3r/ReviewReaper/logs"
+	"NaNameUz3r/ReviewReaper/utils"
 	"context"
 	"errors"
 	"fmt"
 	"sync"
 	"time"
-
-	"NaNameUz3r/ReviewReaper/logs"
-	"NaNameUz3r/ReviewReaper/utils"
 
 	"helm.sh/helm/v3/pkg/action"
 	"helm.sh/helm/v3/pkg/cli"
@@ -26,9 +25,10 @@ import (
 )
 
 const (
-	HH_MM        = "15:04"
-	RFC3339local = "2006-01-02T15:04:05Z"
-	TICK_SECONDS = 5
+	HH_MM          = "15:04"
+	RFC3339local   = "2006-01-02T15:04:05Z"
+	TICK_SECONDS   = 5
+	RESYNC_TIMEOUT = 15 * time.Minute
 )
 
 type NsInformer struct {
@@ -40,7 +40,12 @@ type NsInformer struct {
 	nsLister listers.NamespaceLister
 }
 
-func NewNsInformer(restConfig *rest.Config, client *kubernetes.Clientset, logger logs.Logger, appConfig utils.Config) *NsInformer {
+func NewNsInformer(
+	restConfig *rest.Config,
+	client *kubernetes.Clientset,
+	logger logs.Logger,
+	appConfig utils.Config,
+) *NsInformer {
 	return &NsInformer{
 		restConfig: restConfig,
 		client:     client,
@@ -50,9 +55,7 @@ func NewNsInformer(restConfig *rest.Config, client *kubernetes.Clientset, logger
 }
 
 func (n *NsInformer) Run(ctx context.Context) error {
-
-	// TODO: this timeout should be changed on release -------------↓
-	informerFactory := informers.NewSharedInformerFactory(n.client, 0)
+	informerFactory := informers.NewSharedInformerFactory(n.client, RESYNC_TIMEOUT)
 
 	factoryNsInformer := informerFactory.Core().V1().Namespaces()
 	namespaceInformer := factoryNsInformer.Informer()
@@ -110,13 +113,23 @@ func (n *NsInformer) ensureAnnotated(ctx context.Context, ns *corev1.Namespace) 
 		createdAt := n.getNsCreationTimestamp(ns)
 		decommissionTimestamp := n.shiftTimeStampByRetention(createdAt).UTC().Format(time.RFC3339)
 		n.annotateRetention(ctx, ns, decommissionTimestamp)
-		n.logger.Info("Annotated for deletion", "NsName", ns.Name, "DeletionTimestamp", decommissionTimestamp)
+		n.logger.Info(
+			"Annotated for deletion",
+			"NsName",
+			ns.Name,
+			"DeletionTimestamp",
+			decommissionTimestamp,
+		)
 	}
 
 	return nil
 }
 
-func (n *NsInformer) annotateRetention(ctx context.Context, ns *corev1.Namespace, annotationValue string) error {
+func (n *NsInformer) annotateRetention(
+	ctx context.Context,
+	ns *corev1.Namespace,
+	annotationValue string,
+) error {
 	if ns.ObjectMeta.Annotations[n.appConfig.AnnotationKey] == annotationValue {
 		return nil
 	}
@@ -134,7 +147,6 @@ func (n *NsInformer) annotateRetention(ctx context.Context, ns *corev1.Namespace
 
 	updateOptions := metav1.UpdateOptions{}
 	_, err := n.client.CoreV1().Namespaces().Update(ctx, newNs, updateOptions)
-
 	if err != nil {
 		n.logger.Error("Unable to annotate", "NsName", ns.Name, "ERROR:", err)
 	}
@@ -148,7 +160,11 @@ func (n *NsInformer) DeletionTicker(ctx context.Context) {
 		tickTime := <-ticker.C
 		if n.isAllowedWindow() {
 			mutex.Lock()
-			n.logger.Info("Beginning scheduled maintenance", "At", tickTime.UTC().Format(time.RFC822))
+			n.logger.Info(
+				"Beginning scheduled maintenance",
+				"At",
+				tickTime.UTC().Format(time.RFC822),
+			)
 			watchedNamespaces, err := n.listWatchedNamespaces()
 			if err != nil {
 				n.logger.Error("Could not list watched namespaces for deletion", err)
@@ -206,8 +222,26 @@ func (n *NsInformer) isTimeAllowed(t time.Time) bool {
 	nbCfg, _ := time.Parse(HH_MM, n.appConfig.DeletionWindow.NotBefore)
 	naCfg, _ := time.Parse(HH_MM, n.appConfig.DeletionWindow.NotAfter)
 
-	notBefore := time.Date(t.Year(), t.Month(), t.Day(), nbCfg.Hour(), nbCfg.Minute(), 0, 0, time.UTC)
-	notAfter := time.Date(t.Year(), t.Month(), t.Day(), naCfg.Hour(), naCfg.Minute(), 0, 0, time.UTC)
+	notBefore := time.Date(
+		t.Year(),
+		t.Month(),
+		t.Day(),
+		nbCfg.Hour(),
+		nbCfg.Minute(),
+		0,
+		0,
+		time.UTC,
+	)
+	notAfter := time.Date(
+		t.Year(),
+		t.Month(),
+		t.Day(),
+		naCfg.Hour(),
+		naCfg.Minute(),
+		0,
+		0,
+		time.UTC,
+	)
 
 	if t.After(notBefore) && t.Before(notAfter) {
 		isAllowed = true
@@ -237,7 +271,8 @@ func (n *NsInformer) getNextMaintenanceTime(now time.Time) time.Time {
 		"Wed": 3,
 		"Thu": 4,
 		"Fri": 5,
-		"Sat": 6}
+		"Sat": 6,
+	}
 
 	n.logger.Info("Seeking next allowed maintenance window")
 	if !n.isTodayAllowed(now) {
@@ -286,13 +321,14 @@ func (n *NsInformer) listWatchedNamespaces() (namespaces []*corev1.Namespace, er
 		if n.isWatched(ns) && ns.Annotations[n.appConfig.NsPreserveAnnotation] != "true" {
 			watchedNamespaces = append(watchedNamespaces, ns)
 		}
-
 	}
 	return watchedNamespaces, err
-
 }
 
-func (n *NsInformer) postponeDelOfActive(ctx context.Context, watchedNamespaces []*corev1.Namespace) error {
+func (n *NsInformer) postponeDelOfActive(
+	ctx context.Context,
+	watchedNamespaces []*corev1.Namespace,
+) error {
 	for _, ns := range watchedNamespaces {
 
 		nsReleases, _ := n.listNamespaceReleases(ns)
@@ -317,7 +353,6 @@ func (n *NsInformer) postponeDelOfActive(ctx context.Context, watchedNamespaces 
 func (n *NsInformer) latestDeployedRelease(releases []*release.Release) *release.Release {
 	latest := releases[0]
 	for _, release := range releases {
-
 		if release.Info.LastDeployed.After(latest.Info.LastDeployed) {
 			latest = release
 		}
@@ -325,7 +360,9 @@ func (n *NsInformer) latestDeployedRelease(releases []*release.Release) *release
 	return latest
 }
 
-func (n *NsInformer) filterExpiredNamespaces(watchedNamespaces []*corev1.Namespace) (expiredNamespaces []*corev1.Namespace) {
+func (n *NsInformer) filterExpiredNamespaces(
+	watchedNamespaces []*corev1.Namespace,
+) (expiredNamespaces []*corev1.Namespace) {
 	timeNow := time.Now().UTC()
 
 	for _, ns := range watchedNamespaces {
@@ -359,7 +396,6 @@ func (n *NsInformer) getNsAnnotations(ns *corev1.Namespace) map[string]string {
 }
 
 func (n *NsInformer) shiftTimeStampByRetention(timestamp time.Time) time.Time {
-
 	retentionDays := n.appConfig.RetentionDays
 	retentionHours := n.appConfig.RetentionHours
 
@@ -372,11 +408,12 @@ func (n *NsInformer) shiftTimeStampByRetention(timestamp time.Time) time.Time {
 	}
 
 	return shiftedTs
-
 }
 
-func (n *NsInformer) processExpiredNamespaces(ctx context.Context, namespaces []*corev1.Namespace) error {
-
+func (n *NsInformer) processExpiredNamespaces(
+	ctx context.Context,
+	namespaces []*corev1.Namespace,
+) error {
 	batchSize := n.appConfig.DeletionBatchSize
 	napSeconds := time.Duration(n.appConfig.DeletionNapSeconds) * time.Second
 
@@ -439,7 +476,9 @@ func (n *NsInformer) deleteNamespaces(ctx context.Context, namespaces []*corev1.
 	return nil
 }
 
-func (n *NsInformer) listNamespaceReleases(namespace *corev1.Namespace) ([]*release.Release, error) {
+func (n *NsInformer) listNamespaceReleases(
+	namespace *corev1.Namespace,
+) ([]*release.Release, error) {
 	releasesList := make([]*release.Release, 0)
 
 	settings := cli.New()
@@ -460,10 +499,12 @@ func (n *NsInformer) listNamespaceReleases(namespace *corev1.Namespace) ([]*rele
 	}
 
 	return releasesList, nil
-
 }
 
-func (n *NsInformer) deleteNamespaceReleases(releases []*release.Release, namespace *corev1.Namespace) error {
+func (n *NsInformer) deleteNamespaceReleases(
+	releases []*release.Release,
+	namespace *corev1.Namespace,
+) error {
 	// TODO: is there some way to catch error?
 	settings := cli.New()
 	settings.SetNamespace(namespace.Name)
@@ -478,7 +519,13 @@ func (n *NsInformer) deleteNamespaceReleases(releases []*release.Release, namesp
 		wg.Add(1)
 		go func(r *release.Release, wg *sync.WaitGroup) {
 			deleteAction.Run(r.Name)
-			n.logger.Info("Uninstalling helm release", "name", r.Name, "from namespace", namespace.Name)
+			n.logger.Info(
+				"Uninstalling helm release",
+				"name",
+				r.Name,
+				"from namespace",
+				namespace.Name,
+			)
 			wg.Done()
 		}(r, wg)
 	}
