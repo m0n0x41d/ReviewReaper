@@ -252,7 +252,6 @@ func (n *NsInformer) isTimeAllowed(t time.Time) bool {
 func (n *NsInformer) durationUntilMaintenance() time.Duration {
 	now := time.Now().UTC()
 	nextMaintenanceTime := n.getNextMaintenanceTime(now)
-	fmt.Println("Next maintenance window start", "Timestamp", nextMaintenanceTime)
 	timeDifference := time.Until(time.Unix(nextMaintenanceTime.Unix(), 0))
 	return timeDifference
 }
@@ -344,7 +343,7 @@ func (n *NsInformer) postponeDelOfActive(
 		if latestDeployTs.After(nsCreationTs) && latestDeployTs.Before(nsDeletionTs) {
 			newRetention := n.shiftTimeStampByRetention(latestDeployTs).UTC().Format(time.RFC3339)
 			n.annotateRetention(ctx, ns, newRetention)
-			n.logger.Info("namespace", ns.Name, "deletion postponed for", newRetention)
+			n.logger.Info("namespace", ns.Name, "deletion postponed", "for", newRetention)
 		}
 	}
 	return nil
