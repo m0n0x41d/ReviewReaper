@@ -1,0 +1,29 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Chart.Name }}
+data:
+  comfig.yaml: |
+    NsNameDeletionRegexp: feature
+
+    Retention:
+      Days: 1
+      Hours: 2
+
+    DeletionBatchSize: 1
+    DeletionNapSeconds: 1
+
+    AnnotationKey: "delete_after"
+
+    IsUninstallReleases: true
+
+    PostoneNsDeletionByHelmDeploy: true
+
+    DeletionWindow:
+      NotBefore: "00:00"
+      NotAfter:  "23:59"
+      WeekDays:  ["Sun", "Mon", "Tue", "Wed", "Thi", "Fri", "Sat"]
+
+    DryRun: true
+
