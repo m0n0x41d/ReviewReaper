@@ -15,7 +15,9 @@ var (
 	NsPreserveAnnotation = "review-reaper-protected"
 
 	errMaintenanceDaysInvalid   = fmt.Errorf("Invalid weekdays in config DeletionWindow.WeekDays")
-	errMaintenanceWindowInvalid = fmt.Errorf("Timewindow invalid, NotBefore should be less than NotAfter")
+	errMaintenanceWindowInvalid = fmt.Errorf(
+		"Timewindow invalid, NotBefore should be less than NotAfter",
+	)
 )
 
 // TODO: Check if rest of the fields also can be validated. It's probably worth implementing a custom validation function and removing the validator.
@@ -44,7 +46,6 @@ type Config struct {
 var validate = validator.New()
 
 func LoadConfig() (config Config, err error) {
-
 	viper.SetConfigName("config")
 	viper.SetConfigType("yaml")
 	viper.AddConfigPath("/etc/app/")

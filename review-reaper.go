@@ -1,14 +1,13 @@
 package main
 
 import (
+	"NaNameUz3r/ReviewReaper/logs"
+	"NaNameUz3r/ReviewReaper/namespaces_informer"
+	"NaNameUz3r/ReviewReaper/utils"
 	"context"
 	"os"
 	"os/signal"
 	"syscall"
-
-	"NaNameUz3r/ReviewReaper/logs"
-	"NaNameUz3r/ReviewReaper/namespaces_informer"
-	"NaNameUz3r/ReviewReaper/utils"
 
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -19,7 +18,6 @@ import (
 )
 
 func main() {
-
 	appConfig, err := utils.LoadConfig()
 	if err != nil {
 		panic(err)
@@ -41,7 +39,12 @@ func main() {
 		logger.Error("Could not make ClientSet", err)
 	}
 
-	newInformer := namespaces_informer.NewNsInformer(clusterConfig, clusterClient, logger, appConfig)
+	newInformer := namespaces_informer.NewNsInformer(
+		clusterConfig,
+		clusterClient,
+		logger,
+		appConfig,
+	)
 	if err := newInformer.Run(ctx); err != nil {
 		logger.Error("Could not start informer", err)
 	}
