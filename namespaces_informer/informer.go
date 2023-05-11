@@ -156,15 +156,19 @@ func (n *NsInformer) annotateRetention(
 func (n *NsInformer) DeletionTicker(ctx context.Context) {
 	ticker := time.NewTicker(TICK_SECONDS * time.Second)
 	mutex := new(sync.Mutex)
+	mtInProgress := false
 	for range ticker.C {
 		tickTime := <-ticker.C
 		if n.isNowAllowed() {
 			mutex.Lock()
-			n.logger.Info(
-				"Beginning scheduled maintenance",
-				"At",
-				tickTime.UTC().Format(time.RFC822),
-			)
+			mtInProgress = true
+			if mtInProgress {
+				n.logger.Info(
+					"Beginning scheduled maintenance iteration",
+					"At",
+					tickTime.UTC().Format(time.RFC822),
+				)
+			}
 			watchedNamespaces, err := n.listWatchedNamespaces()
 			if err != nil {
 				n.logger.Error("Could not list watched namespaces for deletion", err)
@@ -187,6 +191,8 @@ func (n *NsInformer) DeletionTicker(ctx context.Context) {
 			}
 			mutex.Unlock()
 		} else {
+			mtInProgress = false
+			n.logger.Info("Seems that maintenance window is over...")
 			sleepFor := n.durationUntilMaintenance()
 			n.logger.Info("Taking a nap until next maintenance window", "SleepFor", sleepFor)
 			time.Sleep(sleepFor)
@@ -246,6 +252,9 @@ func (n *NsInformer) isTimeNowAllowed(t time.Time) bool {
 }
 
 func (n *NsInformer) isMaintenanceToday(t time.Time) bool {
+	if !n.isTodayAllowed(t) {
+		return false
+	}
 	nbCfg, _ := time.Parse(HH_MM, n.appConfig.DeletionWindow.NotBefore)
 	nowHHMM, _ := time.Parse(HH_MM, t.Format(HH_MM))
 
@@ -260,6 +269,24 @@ func (n *NsInformer) durationUntilMaintenance() time.Duration {
 	return timeDifference
 }
 
+func (n *NsInformer) isTodayLastDayOfTheMonth(t time.Time) bool {
+	today := t.UTC()
+	tomorrow := today.AddDate(0, 0, 1)
+	if tomorrow.Month() != today.Month() {
+		return true
+	}
+	return false
+}
+
+func (n *NsInformer) isTodayLastDayOfTheYear(t time.Time) bool {
+	today := t.UTC()
+	tomorrow := today.AddDate(0, 0, 1)
+	if tomorrow.Year() != today.Year() {
+		return true
+	}
+	return false
+}
+
 func (n *NsInformer) getNextMaintenanceTime(now time.Time) time.Time {
 	currentMonth := now.Month()
 	currentYear := now.Year()
@@ -270,8 +297,7 @@ func (n *NsInformer) getNextMaintenanceTime(now time.Time) time.Time {
 
 	n.logger.Info("Seeking next allowed maintenance window")
 
-	if n.isTodayAllowed(now) && n.isMaintenanceToday(now) {
-
+	if n.isMaintenanceToday(now) {
 		nextDate = time.Date(
 			currentYear,
 			currentMonth,
@@ -281,9 +307,7 @@ func (n *NsInformer) getNextMaintenanceTime(now time.Time) time.Time {
 			0,
 			0, time.UTC)
 		n.logger.Info("Maintenanse will be today later")
-	}
-
-	if !n.isTodayAllowed(now) {
+	} else {
 		nextDate = time.Date(
 			currentYear,
 			currentMonth,
@@ -294,6 +318,15 @@ func (n *NsInformer) getNextMaintenanceTime(now time.Time) time.Time {
 			0, time.UTC)
 		n.logger.Info("No maintenance window today, will check tomorrow")
 	}
+
+	if n.isTodayLastDayOfTheMonth(now) {
+		nextDate.AddDate(0, 1, 0)
+	}
+
+	if n.isTodayLastDayOfTheMonth(now) {
+		nextDate.AddDate(1, 0, 0)
+	}
+
 	return nextDate
 }
 
