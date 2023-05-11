@@ -1,21 +1,23 @@
 NsNameDeletionRegexp: feature
 
 Retention:
-  Days: 1
-  Hours: 2
+  Days: 7
 
-DeletionBatchSize: 1
-DeletionNapSeconds: 1
+DeletionBatchSize: 3
+DeletionNapSeconds: 30
 
-AnnotationKey: delete_after
+AnnotationKey: "delete_after"
 
 IsUninstallReleases: true
 
 PostoneNsDeletionByHelmDeploy: true
 
 DeletionWindow:
-  NotBefore: "13:00"
-  NotAfter:  "14:30"
-  WeekDays:  [Tue]
+  NotBefore: "07:00"
+  NotAfter:  "23:59"
+  WeekDays:  ["Sun", "Mon", "Tue", "Wed", "Fri", "Sat"]
 
 DryRun: true
+
+
+

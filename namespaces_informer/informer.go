@@ -158,7 +158,7 @@ func (n *NsInformer) DeletionTicker(ctx context.Context) {
 	mutex := new(sync.Mutex)
 	for range ticker.C {
 		tickTime := <-ticker.C
-		if n.isAllowedWindow() {
+		if n.isNowAllowed() {
 			mutex.Lock()
 			n.logger.Info(
 				"Beginning scheduled maintenance",
@@ -188,7 +188,7 @@ func (n *NsInformer) DeletionTicker(ctx context.Context) {
 			mutex.Unlock()
 		} else {
 			sleepFor := n.durationUntilMaintenance()
-			n.logger.Info("Will sleep until next maintenance window", "SleepFor", sleepFor)
+			n.logger.Info("Taking a nap until next maintenance window", "SleepFor", sleepFor)
 			time.Sleep(sleepFor)
 		}
 	}
@@ -196,11 +196,11 @@ func (n *NsInformer) DeletionTicker(ctx context.Context) {
 	n.logger.Info("Finishig deletion ticker...")
 }
 
-func (n *NsInformer) isAllowedWindow() bool {
+func (n *NsInformer) isNowAllowed() bool {
 	timeNow := time.Now().UTC()
 	isAllowed := false
 
-	if n.isTodayAllowed(timeNow) && n.isTimeAllowed(timeNow) {
+	if n.isTodayAllowed(timeNow) && n.isTimeNowAllowed(timeNow) {
 		isAllowed = true
 	}
 
@@ -209,15 +209,11 @@ func (n *NsInformer) isAllowedWindow() bool {
 
 func (n *NsInformer) isTodayAllowed(t time.Time) bool {
 	todayWeekday := t.UTC().Weekday().String()[0:3]
-	return n.isDayAllowed(todayWeekday)
-}
-
-func (n *NsInformer) isDayAllowed(day string) bool {
-	weekdayOk := utils.IsContains(n.appConfig.DeletionWindow.WeekDays, day)
+	weekdayOk := utils.IsContains(n.appConfig.DeletionWindow.WeekDays, todayWeekday)
 	return weekdayOk
 }
 
-func (n *NsInformer) isTimeAllowed(t time.Time) bool {
+func (n *NsInformer) isTimeNowAllowed(t time.Time) bool {
 	isAllowed := false
 	nbCfg, _ := time.Parse(HH_MM, n.appConfig.DeletionWindow.NotBefore)
 	naCfg, _ := time.Parse(HH_MM, n.appConfig.DeletionWindow.NotAfter)
@@ -249,6 +245,14 @@ func (n *NsInformer) isTimeAllowed(t time.Time) bool {
 	return isAllowed
 }
 
+func (n *NsInformer) isMaintenanceToday(t time.Time) bool {
+	nbCfg, _ := time.Parse(HH_MM, n.appConfig.DeletionWindow.NotBefore)
+	nowHHMM, _ := time.Parse(HH_MM, t.Format(HH_MM))
+
+	isLater := nowHHMM.UTC().Before(nbCfg.UTC())
+	return isLater
+}
+
 func (n *NsInformer) durationUntilMaintenance() time.Duration {
 	now := time.Now().UTC()
 	nextMaintenanceTime := n.getNextMaintenanceTime(now)
@@ -257,54 +261,39 @@ func (n *NsInformer) durationUntilMaintenance() time.Duration {
 }
 
 func (n *NsInformer) getNextMaintenanceTime(now time.Time) time.Time {
-	today := now.Weekday()
 	currentMonth := now.Month()
 	currentYear := now.Year()
-	var nextAllowedDayNumber int
-	var daysUntilNextWeekday int
-
-	dayMap := map[string]int{
-		"Sun": 0,
-		"Mon": 1,
-		"Tue": 2,
-		"Wed": 3,
-		"Thu": 4,
-		"Fri": 5,
-		"Sat": 6,
-	}
-
-	n.logger.Info("Seeking next allowed maintenance window")
-	if !n.isTodayAllowed(now) {
-		for _, day := range n.appConfig.DeletionWindow.WeekDays {
-			if n.isDayAllowed(day) {
-				nextAllowedDayNumber = dayMap[day]
-				n.logger.Info("Next allowed maintanance", "day", day)
-				break
-			}
-		}
-		daysUntilNextWeekday = (nextAllowedDayNumber + 7 - int(today)) % 7
-	}
-
-	if n.isTodayAllowed(now) && !n.isTimeAllowed(now) {
-		nextAllowedDayNumber = int(today)
-		daysUntilNextWeekday = 7
-	}
-
-	if nextAllowedDayNumber <= int(today) {
-		currentYear, currentMonth, _ = now.AddDate(0, 0, 7).Date()
-	}
+	var nextDate time.Time
 
 	nbCfg, _ := time.Parse(HH_MM, n.appConfig.DeletionWindow.NotBefore)
+	fmt.Println(n.isMaintenanceToday(now))
 
-	nextDate := time.Date(
-		currentYear,
-		currentMonth,
-		int(now.Day())+daysUntilNextWeekday,
-		nbCfg.Hour(),
-		nbCfg.Minute(),
-		0,
-		0, time.UTC)
+	n.logger.Info("Seeking next allowed maintenance window")
 
+	if n.isTodayAllowed(now) && n.isMaintenanceToday(now) {
+
+		nextDate = time.Date(
+			currentYear,
+			currentMonth,
+			int(now.Day()),
+			nbCfg.Hour(),
+			nbCfg.Minute(),
+			0,
+			0, time.UTC)
+		n.logger.Info("Maintenanse will be today later")
+	}
+
+	if !n.isTodayAllowed(now) {
+		nextDate = time.Date(
+			currentYear,
+			currentMonth,
+			int(now.Day())+1,
+			nbCfg.Hour(),
+			nbCfg.Minute(),
+			0,
+			0, time.UTC)
+		n.logger.Info("No maintenance window today, will check tomorrow")
+	}
 	return nextDate
 }
 
