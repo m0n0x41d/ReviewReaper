@@ -5,7 +5,6 @@ import (
 	"NaNameUz3r/ReviewReaper/utils"
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"time"
 
@@ -188,6 +187,8 @@ func (n *NsInformer) DeletionTicker(ctx context.Context) {
 				}
 			} else {
 				n.logger.Info("Nothing to delete.")
+				n.logger.Info("Taking a nap for 15 minutes...")
+				time.Sleep(time.Minute * 15)
 			}
 			mutex.Unlock()
 		} else {
@@ -293,8 +294,6 @@ func (n *NsInformer) getNextMaintenanceTime(now time.Time) time.Time {
 	var nextDate time.Time
 
 	nbCfg, _ := time.Parse(HH_MM, n.appConfig.DeletionWindow.NotBefore)
-	fmt.Println(n.isMaintenanceToday(now))
-
 	n.logger.Info("Seeking next allowed maintenance window")
 
 	if n.isMaintenanceToday(now) {
@@ -350,6 +349,10 @@ func (n *NsInformer) postponeDelOfActive(
 	ctx context.Context,
 	watchedNamespaces []*corev1.Namespace,
 ) error {
+	n.logger.Info(
+		"Comparing the timestamps of the last deployed Helm releases in the watched namespaces with the deletion timestamps of these namespaces",
+	)
+
 	for _, ns := range watchedNamespaces {
 
 		nsReleases, _ := n.listNamespaceReleases(ns)
@@ -358,12 +361,28 @@ func (n *NsInformer) postponeDelOfActive(
 		}
 
 		nsDeletionTs, _ := n.getNsDeletionTimespamp(ns)
-		nsCreationTs := n.getNsCreationTimestamp(ns)
 		latestRelease := n.latestDeployedRelease(nsReleases)
 
 		latestDeployTs := latestRelease.Info.LastDeployed.UTC().Time
-		if latestDeployTs.After(nsCreationTs) && latestDeployTs.Before(nsDeletionTs) {
-			newRetention := n.shiftTimeStampByRetention(latestDeployTs).UTC().Format(time.RFC3339)
+		considerDeletionTs := latestDeployTs.AddDate(0, 0, n.appConfig.RetentionDays)
+		considerDeletionTs.Add(time.Hour * time.Duration(n.appConfig.RetentionHours))
+
+		truncatedNsDeletionTs := nsDeletionTs.Truncate(time.Second)
+		truncatedConsiderDeletionTs := considerDeletionTs.Truncate(time.Second)
+
+		if truncatedNsDeletionTs.Equal(truncatedConsiderDeletionTs) {
+			n.logger.Info(
+				"namespace",
+				ns.Name,
+				"deletion scheduled correctly.",
+				"Deletion timestamp is",
+				nsDeletionTs,
+			)
+			continue
+		}
+
+		if nsDeletionTs.Before(considerDeletionTs) {
+			newRetention := considerDeletionTs.Format(time.RFC3339)
 			n.annotateRetention(ctx, ns, newRetention)
 			n.logger.Info("namespace", ns.Name, "deletion postponed", "for", newRetention)
 		}
@@ -392,7 +411,6 @@ func (n *NsInformer) filterExpiredNamespaces(
 			n.logger.Error("Invalid timestamp parsed from watched namespace")
 			return expiredNamespaces
 		}
-
 		if nsDeletionTimespamp.Before(timeNow) {
 			expiredNamespaces = append(expiredNamespaces, ns)
 		}
@@ -531,6 +549,10 @@ func (n *NsInformer) deleteNamespaceReleases(
 	settings.SetNamespace(namespace.Name)
 	actionConfig := new(action.Configuration)
 
+	if err := actionConfig.Init(settings.RESTClientGetter(), settings.Namespace(), "secret", n.logger.Debug); err != nil {
+		n.logger.Error("Failed to set up helm action config", err)
+		panic(err)
+	}
 	deleteAction := action.NewUninstall(actionConfig)
 	deleteAction.DisableHooks = false
 
@@ -554,3 +576,5 @@ func (n *NsInformer) deleteNamespaceReleases(
 
 	return nil
 }
+
+
