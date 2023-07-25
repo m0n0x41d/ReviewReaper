@@ -27,7 +27,7 @@ const (
 	HH_MM          = "15:04"
 	RFC3339local   = "2006-01-02T15:04:05Z"
 	TICK_SECONDS   = 5
-	RESYNC_TIMEOUT = 15 * time.Minute
+	RESYNC_TIMEOUT = 30 * time.Second
 )
 
 type NsInformer struct {
@@ -72,7 +72,9 @@ func (n *NsInformer) Run(ctx context.Context) error {
 	go informerFactory.Start(ctx.Done())
 	// start to sync and call list
 	if !cache.WaitForCacheSync(ctx.Done(), namespaceInformer.HasSynced) {
-		return errors.New("Timeout occurred while waiting for caches to synchronize")
+		err := errors.New("Timeout occurred while waiting for caches to synchronize")
+		n.logger.Error("Error waiting for caches to sync", err)
+		return err
 	}
 
 	go n.DeletionTicker(ctx)
@@ -84,7 +86,10 @@ func (n *NsInformer) onAddNamespace(ctx context.Context) func(interface{}) {
 	return func(obj interface{}) {
 		namespace := obj.(*corev1.Namespace)
 		if n.isWatched(namespace) {
-			n.ensureAnnotated(ctx, namespace)
+			err := n.ensureAnnotated(ctx, namespace)
+			if err != nil {
+				n.logger.Error("Error occurred while ensuring annotation of new namespace", namespace.Name, err)
+			}
 		}
 	}
 }
@@ -94,7 +99,10 @@ func (n *NsInformer) onUpdateNamespace(ctx context.Context) func(interface{}, in
 		newNamespace := newObj.(*corev1.Namespace)
 
 		if n.isWatched(newNamespace) {
-			n.ensureAnnotated(ctx, newNamespace)
+			err := n.ensureAnnotated(ctx, newNamespace)
+			if err != nil {
+				n.logger.Error("Error occurred while ensuring annotation of updated namespace", newNamespace.Name, err)
+			}
 		}
 	}
 }
@@ -111,7 +119,10 @@ func (n *NsInformer) ensureAnnotated(ctx context.Context, ns *corev1.Namespace) 
 	if !ok {
 		createdAt := n.getNsCreationTimestamp(ns)
 		decommissionTimestamp := n.shiftTimeStampByRetention(createdAt).UTC().Format(time.RFC3339)
-		n.annotateRetention(ctx, ns, decommissionTimestamp)
+		err := n.annotateRetention(ctx, ns, decommissionTimestamp)
+		if err != nil {
+			return err
+		}
 		n.logger.Info(
 			"Annotated for deletion",
 			"NsName",
@@ -148,6 +159,7 @@ func (n *NsInformer) annotateRetention(
 	_, err := n.client.CoreV1().Namespaces().Update(ctx, newNs, updateOptions)
 	if err != nil {
 		n.logger.Error("Unable to annotate", "NsName", ns.Name, "ERROR:", err)
+		return err
 	}
 	return nil
 }
@@ -157,23 +169,36 @@ func (n *NsInformer) DeletionTicker(ctx context.Context) {
 	mutex := new(sync.Mutex)
 	mtInProgress := false
 	for range ticker.C {
-		tickTime := <-ticker.C
+		if mtInProgress {
+			continue
+		}
+
 		if n.isNowAllowed() {
 			mutex.Lock()
 			mtInProgress = true
-			if mtInProgress {
-				n.logger.Info(
-					"Beginning scheduled maintenance iteration",
-					"At",
-					tickTime.UTC().Format(time.RFC822),
-				)
-			}
+			n.logger.Info(
+				"Beginning scheduled maintenance iteration",
+				"At",
+				time.Now().UTC().Format(time.RFC822),
+			)
 			watchedNamespaces, err := n.listWatchedNamespaces()
 			if err != nil {
-				n.logger.Error("Could not list watched namespaces for deletion", err)
+				n.logger.Error("Could not list watched namespaces", err)
 			}
 			if n.appConfig.PostponeDeletion && len(watchedNamespaces) > 0 {
-				n.postponeDelOfActive(ctx, watchedNamespaces)
+				isPostponed, err := n.postponeDelOfActive(ctx, watchedNamespaces)
+				if err != nil {
+					n.logger.Error("Failed while checking watched namespaces for helm release activeness", err)
+				}
+				if isPostponed {
+					n.logger.Info("Need to re-sync watched namespaces list, to fetch possible changes of deletion postponer...")
+					time.Sleep(RESYNC_TIMEOUT)
+					time.Sleep(time.Second * 5)
+					watchedNamespaces, err = n.listWatchedNamespaces()
+					if err != nil {
+						n.logger.Error("Could not list watched namespaces", err)
+					}
+				}
 			}
 
 			expiredNamespaces := n.filterExpiredNamespaces(watchedNamespaces)
@@ -191,8 +216,8 @@ func (n *NsInformer) DeletionTicker(ctx context.Context) {
 				time.Sleep(time.Minute * 15)
 			}
 			mutex.Unlock()
-		} else {
 			mtInProgress = false
+		} else {
 			n.logger.Info("Seems that maintenance window is over...")
 			sleepFor := n.durationUntilMaintenance()
 			n.logger.Info("Taking a nap until next maintenance window", "SleepFor", sleepFor)
@@ -334,7 +359,7 @@ func (n *NsInformer) listWatchedNamespaces() (namespaces []*corev1.Namespace, er
 
 	namespaces, err = n.nsLister.List(labels.Everything())
 	if err != nil {
-		return watchedNamespaces, errors.New("could not list namespaces")
+		return watchedNamespaces, err
 	}
 
 	for _, ns := range namespaces {
@@ -348,14 +373,18 @@ func (n *NsInformer) listWatchedNamespaces() (namespaces []*corev1.Namespace, er
 func (n *NsInformer) postponeDelOfActive(
 	ctx context.Context,
 	watchedNamespaces []*corev1.Namespace,
-) error {
+) (bool, error) {
+	isSomethingPostponed := false
 	n.logger.Info(
 		"Comparing the timestamps of the last deployed Helm releases in the watched namespaces with the deletion timestamps of these namespaces",
 	)
 
 	for _, ns := range watchedNamespaces {
 
-		nsReleases, _ := n.listNamespaceReleases(ns)
+		nsReleases, err := n.listNamespaceReleases(ns)
+		if err != nil {
+			return false, err
+		}
 		if len(nsReleases) <= 0 {
 			continue
 		}
@@ -385,9 +414,10 @@ func (n *NsInformer) postponeDelOfActive(
 			newRetention := considerDeletionTs.Format(time.RFC3339)
 			n.annotateRetention(ctx, ns, newRetention)
 			n.logger.Info("namespace", ns.Name, "deletion postponed", "for", newRetention)
+			isSomethingPostponed = true
 		}
 	}
-	return nil
+	return isSomethingPostponed, nil
 }
 
 func (n *NsInformer) latestDeployedRelease(releases []*release.Release) *release.Release {
@@ -576,5 +606,3 @@ func (n *NsInformer) deleteNamespaceReleases(
 
 	return nil
 }
-
-
